@@ -592,7 +592,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (req.method === "POST" && url === "/api/update/apply") {
-    try { sendJson(res, 200, await updateApply()); } catch (e) { sendJson(res, 500, { error: e.message }); }
+    try {
+      const r = await updateApply();
+      sendJson(res, 200, r);
+      if (r.ok && !r.already) selfRestart();
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
     return;
   }
   if (req.method === "GET") {
@@ -603,8 +607,38 @@ const server = http.createServer(async (req, res) => {
   res.end("not found");
 });
 
+// 热更新后自我重启：派生一个 watcher 进程，等端口释放后再启动新 server.js（与新旧版本的重试逻辑无关，始终可靠）
+function selfRestart() {
+  if (process.env.MINDWEAVE_UPDATE_TARGET) return; // 测试模式不重启
+  const watcher =
+    'const net=require("net"),{spawn}=require("child_process");' +
+    'const port=parseInt(process.env.PORT||"4317",10),root=process.env.MW_ROOT;' +
+    'function waitFree(){const s=net.connect(port,"127.0.0.1");' +
+    's.on("connect",()=>{s.end();setTimeout(waitFree,300)});' +
+    's.on("error",()=>{const c=spawn(process.execPath,[root+"/server.js"],{detached:true,stdio:"ignore",windowsHide:true,env:process.env});c.unref();process.exit(0)});' +
+    's.setTimeout(2000,()=>{s.destroy();setTimeout(waitFree,300)})}' +
+    'waitFree();setTimeout(()=>process.exit(0),60000);';
+  setTimeout(() => {
+    try {
+      const child = spawn(process.execPath, ["-e", watcher], {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+        env: Object.assign({}, process.env, { PORT: String(PORT), MW_ROOT: ROOT }),
+      });
+      child.unref();
+    } catch (e) {}
+    setTimeout(() => process.exit(0), 300);
+  }, 500);
+}
+let bindRetries = 0;
 server.on("error", (e) => {
   if (e && e.code === "EADDRINUSE") {
+    if (process.env.MINDWEAVE_RESTART && bindRetries < 30) {
+      bindRetries++;
+      setTimeout(() => { try { server.listen(PORT); } catch (e2) {} }, 500);
+      return;
+    }
     console.log("[mindweave-bridge] 端口 " + PORT + " 被占用，可能已有实例在运行，直接退出。");
     process.exit(0);
   }
