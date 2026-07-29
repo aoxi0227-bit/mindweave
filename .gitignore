@@ -9,3 +9,5 @@ node_modules/
 思脉MindWeave.app/
 dist/
 *.zip
+.mindweave/notes/
+.mindweave/groups.md
