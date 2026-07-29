@@ -137,6 +137,11 @@ var(--bg)}
 .node .box{transition:stroke .15s}
 .node:hover .box{stroke:var(--clay-hi)}
 .node.sel .box{stroke:var(--clay);stroke-width:2}
+.node.dragging{opacity:.72}
+.node.dragging .box{stroke:var(--clay);stroke-width:2}
+.node.drop-target .box{stroke:var(--ok);stroke-width:2.5}
+.node.multi-sel .box{stroke:var(--clay);stroke-width:1.6;stroke-dasharray:5 3}
+.marquee{fill:color-mix(in srgb,var(--clay) 10%,transparent);stroke:var(--clay);stroke-width:1.2;stroke-dasharray:5 4}
 .inner.growin{animation:pop .55s cubic-bezier(.3,1.4,.4,1) both;transform-box:fill-box;transform-origin:left center}
 @keyframes pop{from{opacity:0;transform:scale(.5)}to{opacity:1;transform:scale(1)}}
 .link.grow{stroke-dasharray:260;stroke-dashoffset:260;animation:draw .7s ease-out both}
@@ -464,6 +469,17 @@ select.f-input{cursor:pointer}
           <span id="testMsg"></span>
         </div>
       </div>
+      <span class="f-label">画布操作</span>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+        <span style="font-size:12.5px;color:var(--ink-2)">移动画布</span>
+        <select class="f-input" id="panModSel" style="width:auto;padding:4px 8px;font-size:12.5px;height:auto">
+          <option value="Alt">Alt + 左键拖拽</option>
+          <option value="Shift">Shift + 左键拖拽</option>
+          <option value="Ctrl">Ctrl + 左键拖拽</option>
+          <option value="Meta">⌘/Win + 左键拖拽</option>
+        </select>
+      </div>
+      <div class="f-note" style="margin:0 0 8px">默认：空白处左键拖拽 = 框选主题（可成组拖入新父主题）；把主题拖到另一主题上 = 归入其下（子主题随迁）</div>
       <span class="f-label">快捷键（点「录制」后按下新组合；Esc 取消；可「恢复默认」）</span>
       <div id="keybindList"></div>
       <div style="margin-top:8px"><button class="btn line" id="resetKeybinds" style="height:28px;font-size:12px"></button></div>
@@ -634,8 +650,8 @@ if(!m){
 const g=svgEl("g",{class:"node","data-id":n.id},gN);
 const inner=svgEl("g",{class:"inner"},g);
 m={g,inner,rect:null,text:null,dot:null,badge:null};
-g.addEventListener("mousedown",e=>{e.preventDefault();e.stopPropagation()});
-g.addEventListener("click",e=>{e.stopPropagation();selectNode(n.id)});
+g.addEventListener("pointerdown",e=>{e.stopPropagation();if(e.button!==0||e.target.closest(".collapse-badge"))return;e.preventDefault();const ids=(selSet.has(n.id)&&selSet.size>1)?[...selSet]:[n.id];drag={ids,sx:e.clientX,sy:e.clientY,moved:false,dropId:null,parts:ids.map(id=>{const mm=gEls.get(id);const tf=(mm.g.getAttribute("transform")||"").match(/translate\(([-\d.]+)[ ,]([-\d.]+)\)/);return{id,g:mm.g,ox:tf?parseFloat(tf[1]):0,oy:tf?parseFloat(tf[2]):0}})}});
+g.addEventListener("click",e=>{e.stopPropagation();if(!selSet.has(n.id))clearSel();selectNode(n.id)});
 g.addEventListener("dblclick",e=>{e.stopPropagation();startNodeEdit(n.id)});
 gEls.set(n.id,m);
 }
@@ -697,14 +713,35 @@ $("#mdEditor").value=md;renderMap(anim);markDirty();renderDocListSoon()}
 const renderDocListSoon=debounce(renderDocList,800);
 
 const svg=$("#mapSvg"),wrapEl=$("#canvasWrap");
-let pan=null;
-svg.addEventListener("pointerdown",e=>{if(e.target.closest(".node")||e.target.closest(".collapse-badge"))return;pan={x:e.clientX,y:e.clientY,tx:view.tx,ty:view.ty};svg.classList.add("panning");svg.setPointerCapture(e.pointerId)});
-svg.addEventListener("pointermove",e=>{if(!pan)return;view.tx=pan.tx+e.clientX-pan.x;view.ty=pan.ty+e.clientY-pan.y;userZoomed=true;_userPan=true;applyTransform()});
-svg.addEventListener("pointerup",()=>{pan=null;svg.classList.remove("panning")});
+let pan=null,marq=null,drag=null,selSet=new Set();
+function panMod(){return state.settings.panModifier||"Alt"}
+function matchesPanMod(e){const m=panMod();return m==="Alt"?e.altKey:m==="Shift"?e.shiftKey:m==="Ctrl"?e.ctrlKey:e.metaKey}
+svg.addEventListener("pointerdown",e=>{if(e.button!==0||e.target.closest(".node")||e.target.closest(".collapse-badge"))return;if(matchesPanMod(e)){pan={x:e.clientX,y:e.clientY,tx:view.tx,ty:view.ty};svg.classList.add("panning")}else{marq={x0:e.clientX,y0:e.clientY,x1:e.clientX,y1:e.clientY,moved:false,rect:null}}svg.setPointerCapture(e.pointerId)});
+svg.addEventListener("pointermove",e=>{if(pan){view.tx=pan.tx+e.clientX-pan.x;view.ty=pan.ty+e.clientY-pan.y;userZoomed=true;_userPan=true;applyTransform()}else if(marq){marq.x1=e.clientX;marq.y1=e.clientY;if(Math.abs(marq.x1-marq.x0)+Math.abs(marq.y1-marq.y0)>5)marq.moved=true;if(marq.moved)drawMarquee()}});
+svg.addEventListener("pointerup",()=>{if(pan){pan=null;svg.classList.remove("panning")}if(marq)endMarquee()});
+document.addEventListener("pointermove",e=>{if(drag)onDragMove(e)});
+document.addEventListener("pointerup",()=>{if(drag)endDrag()});
+document.addEventListener("keydown",e=>{if(drag&&e.key==="Escape"){e.preventDefault();cancelDrag()}else if(e.key==="Escape"&&selSet.size&&!e.target.matches("input,textarea,select"))clearSel()});
+function worldPt(cx,cy){const vp=$("#gViewport");const m=vp&&vp.getScreenCTM?vp.getScreenCTM():null;if(!m)return{x:0,y:0};const p=new DOMPoint(cx,cy).matrixTransform(m.inverse());return{x:p.x,y:p.y}}
+function drawMarquee(){const a=worldPt(Math.min(marq.x0,marq.x1),Math.min(marq.y0,marq.y1)),b=worldPt(Math.max(marq.x0,marq.x1),Math.max(marq.y0,marq.y1));if(!marq.rect)marq.rect=svgEl("rect",{class:"marquee"},$("#gViewport"));marq.rect.setAttribute("x",a.x);marq.rect.setAttribute("y",a.y);marq.rect.setAttribute("width",b.x-a.x);marq.rect.setAttribute("height",b.y-a.y);gEls.forEach((m,id)=>{const tf=(m.g.getAttribute("transform")||"").match(/translate\(([-\d.]+)[ ,]([-\d.]+)\)/);if(!tf)return;const x=+tf[1],y=+tf[2];m.g.classList.toggle("multi-sel",x<b.x&&x+m.meta.w>a.x&&y<b.y&&y+m.meta.h>a.y)})}
+function endMarquee(){if(marq.rect)marq.rect.remove();if(marq.moved){selSet=new Set();gEls.forEach((m,id)=>{if(m.g.classList.contains("multi-sel"))selSet.add(id)});if(selSet.size)toast("已框选 "+selSet.size+" 个主题，可整体拖入新父主题")}else clearSel();marq=null}
+function clearSel(){selSet=new Set();gEls.forEach(m=>m.g.classList.remove("multi-sel"))}
+function subtreeIds(id){const s=new Set();const n0=findNode(id);if(n0)(function w(n){s.add(n.id);n.children.forEach(w)})(n0);return s}
+function onDragMove(e){const dx=e.clientX-drag.sx,dy=e.clientY-drag.sy;if(!drag.moved){if(Math.abs(dx)+Math.abs(dy)<5)return;drag.moved=true;cancelAnimationFrame(animRAF);nodeEditor.style.display="none";$("#nodeToolbar").style.display="none";drag.parts.forEach(p=>p.g.classList.add("dragging"))}const dw=dx/view.s,dh=dy/view.s;drag.parts.forEach(p=>p.g.setAttribute("transform","translate("+(p.ox+dw)+","+(p.oy+dh)+")"));
+const ex=new Set();drag.ids.forEach(id=>subtreeIds(id).forEach(x=>ex.add(x)));
+const pt=worldPt(e.clientX,e.clientY);let hit=null,hitDepth=-1;
+gEls.forEach((m,id)=>{if(ex.has(id))return;const tf=(m.g.getAttribute("transform")||"").match(/translate\(([-\d.]+)[ ,]([-\d.]+)\)/);if(!tf)return;const x=+tf[1],y=+tf[2];if(pt.x>=x&&pt.x<=x+m.meta.w&&pt.y>=y&&pt.y<=y+m.meta.h&&(m.meta.depth||0)>hitDepth){hit=id;hitDepth=m.meta.depth||0}});
+if(hit!==drag.dropId){gEls.forEach(m=>m.g.classList.remove("drop-target"));if(hit)gEls.get(hit).g.classList.add("drop-target");drag.dropId=hit}}
+function endDrag(){if(!drag)return;const d=drag;drag=null;gEls.forEach(m=>m.g.classList.remove("dragging","drop-target"));if(!d.moved)return;const tid=d.dropId;if(!tid||!findNode(tid)){renderMap(false);return}
+const ex=new Set();d.ids.forEach(id=>subtreeIds(id).forEach(x=>ex.add(x)));if(ex.has(tid)){renderMap(false);return}
+const tops=[];(function w(n){if(d.ids.indexOf(n.id)>=0){if(n.id!=="r")tops.push(n);return}n.children.forEach(w)})(tree);
+if(!tops.length){renderMap(false);return}
+const target=findNode(tid);pushUndo();tops.forEach(n=>{const p=findParent(n.id);if(p)p.children=p.children.filter(c=>c!==n)});tops.forEach(n=>target.children.push(n));collapsedNodes.delete(tid);assignIds(tree);selSet=new Set(tops.map(n=>n.id));commitTree(true);selectNode(tops[0].id);gEls.forEach((m,id)=>{if(selSet.has(id))m.g.classList.add("multi-sel")});if(tops.length===1)centerOnNode(tops[0].id);toast("已移动 "+tops.length+" 个主题到「"+target.title+"」")}
+function cancelDrag(){if(!drag)return;drag=null;gEls.forEach(m=>m.g.classList.remove("dragging","drop-target"));renderMap(false)}
 svg.addEventListener("wheel",e=>{e.preventDefault();const r=wrapEl.getBoundingClientRect();const mx=e.clientX-r.left,my=e.clientY-r.top;
 const ns=clamp(view.s*Math.exp(-e.deltaY*.0016),fitScale,4);
 view.tx=mx-(mx-view.tx)*(ns/view.s);view.ty=my-(my-view.ty)*(ns/view.s);view.s=ns;userZoomed=ns>fitScale+.001;_userPan=true;applyTransform()},{passive:false});
-svg.addEventListener("click",e=>{if(!e.target.closest(".node")){selectNode(null)}});
+svg.addEventListener("click",e=>{if(!e.target.closest(".node")){selectNode(null);clearSel()}});
 let _ct=0,_userPan=false;function centerOnNode(id){clearTimeout(_ct);cancelAnimationFrame(animRAF);animRAF=0;posMap=new Map(layoutNodes.map(n=>[n.id,{x:n.bx,y:n.by}]));paint(posMap);_userPan=false;const wrap=$("#canvasWrap");const apply=()=>{const n=findNode(id);if(!n)return true;const s=view.s;const ntx=wrap.clientWidth/2-(n.bx+n.w/2)*s,nty=wrap.clientHeight/2-(n.by+n.h/2)*s;if(Math.abs(ntx-view.tx)<1&&Math.abs(nty-view.ty)<1)return true;view.tx=ntx;view.ty=nty;userZoomed=true;applyTransform();return false};const tween=()=>{const n=findNode(id);if(!n)return;const s=view.s;const tx=wrap.clientWidth/2-(n.bx+n.w/2)*s,ty=wrap.clientHeight/2-(n.by+n.h/2)*s;const s0=view.s,tx0=view.tx,ty0=view.ty,t0=performance.now();(function step(now){const k=Math.min((now-t0)/340,1),e=1-Math.pow(1-k,3);view.tx=tx0+(tx-tx0)*e;view.ty=ty0+(ty-ty0)*e;view.s=s0+(s-s0)*e;userZoomed=true;applyTransform();if(k<1)requestAnimationFrame(step)})(t0)};tween();_ct=setTimeout(()=>{apply();setTimeout(apply,400);setTimeout(apply,900)},1300)}
 function zoomBy(f){const r=wrapEl.getBoundingClientRect();const mx=r.width/2,my=r.height/2;const ns=clamp(view.s*f,fitScale,4);view.tx=mx-(mx-view.tx)*(ns/view.s);view.ty=my-(my-view.ty)*(ns/view.s);view.s=ns;userZoomed=ns>fitScale+.001;applyTransform()}
 $("#zoomInBtn").onclick=()=>zoomBy(1.25);
@@ -717,7 +754,7 @@ function armEditor(id){const m=gEls.get(id);if(!m)return;editingId=id;m.g.classL
 function beginEditing(){if(!nodeEditor.classList.contains("armed"))return;nodeEditor.classList.remove("armed");nodeEditor.classList.add("editing");const _en=editingId?findNode(editingId):null;if(_en)nodeEditor.dataset.orig=_en.title;if(selectedId&&gEls.has(selectedId))gEls.get(selectedId).g.classList.add("editing")}
 function placeToolbar(){
 const tb=$("#nodeToolbar");
-if(!selectedId||!gEls.has(selectedId)||pan){tb.style.display="none";return}
+if(!selectedId||!gEls.has(selectedId)||pan||drag){tb.style.display="none";return}
 const n=gEls.get(selectedId).meta,p=posMap.get(selectedId);if(!p){tb.style.display="none";return}
 const r=wrapEl.getBoundingClientRect();
 const sx=view.tx+p.x*view.s, sy=view.ty+p.y*view.s, sw=n.w*view.s;
@@ -1083,7 +1120,7 @@ $("#setKeyEye").onclick=()=>{const k=$("#setKey");k.type=k.type==="password"?"te
 $("#reprobeBtn").innerHTML=icon("refresh","icon sm")+"重新探测";
 $("#reprobeBtn").onclick=()=>probeLocal();
 function syncSettingsUI(){setModeUI(state.settings.mode);$("#setBase").value=state.settings.baseURL;$("#setKey").value=state.settings.apiKey;$("#setModel").value=state.settings.model;$("#testMsg").textContent="";fillCliStatus();{const sel=$("#backendSelect");if(sel&&sel.options.length){const has=[...sel.options].some(o=>o.value===state.settings.backend);if(has)sel.value=state.settings.backend}}renderKeybinds();
-$("#presetSelect").value=["https://api.moonshot.cn/v1","https://api.deepseek.com/v1","https://api.openai.com/v1","http://localhost:11434/v1","http://localhost:1234/v1"].includes(state.settings.baseURL)?state.settings.baseURL:""}
+$("#presetSelect").value=["https://api.moonshot.cn/v1","https://api.deepseek.com/v1","https://api.openai.com/v1","http://localhost:11434/v1","http://localhost:1234/v1"].includes(state.settings.baseURL)?state.settings.baseURL:"";const _pm=$("#panModSel");if(_pm)_pm.value=state.settings.panModifier||"Alt"}
 async function probeLocal(){
 const ol=$("#olState"),lm=$("#lmState");
 ol.className="lc-state";ol.textContent="探测中…";lm.className="lc-state";lm.textContent="探测中…";
@@ -1188,7 +1225,7 @@ function setBridgeUI(ok){serverOK=ok;const c=$("#bridgeChip");if(!c)return;c.cla
 function showOverlay(){const ov=$("#bridgeOverlay");if(ov)ov.classList.add("open")}
 function hideOverlay(){const ov=$("#bridgeOverlay");if(ov)ov.classList.remove("open")}
 function finishUI(){loadBackends();renderSkills();checkServer(false).then(h=>{setBridgeUI(!!h);if(h){startHeartbeat();checkUpdate();if(h.ready&&!state.ui.modeExplicit){state.settings.mode="cli";save()}}syncModelChip();renderDocList();loadDocToView();setTimeout(()=>renderMap(false),60)})}
-function wireStaticUI(){applyDark();$("#sidebar").classList.toggle("closed",!state.ui.sideOpen);$("#rightCol").classList.toggle("closed",!state.ui.rightOpen);$("#editorPane").style.flex="0 0 "+state.ui.rightSplit+"%";if(state.ui.hintSeen)$("#hintPill").style.display="none";syncThemeBtn();wireUpdateBar();$("#skillCreateBtn").innerHTML=icon("plus","icon sm");$("#skillInstallBtn").innerHTML=icon("up","icon sm");$("#skillCreateBtn").onclick=openCreateSkillModal;$("#skillInstallBtn").onclick=openInstallSkillModal;$("#memoryBtn").innerHTML=icon("book","icon sm")+"记忆";$("#memoryBtn").onclick=openMemoryModal;$("#backendSelect").addEventListener("change",e=>{state.settings.backend=e.target.value;save();syncModelChip()});$("#setSave").addEventListener("click",()=>{const rf=$("#revealFolderBtn");if(rf&&!rf.dataset.bound){rf.dataset.bound="1";rf.onclick=()=>fetch("/api/data").then(r=>r.json()).then(d=>fetch("/api/data/reveal?p="+encodeURIComponent(d.dataDir))).catch(()=>toast("无法打开文件夹"))}});$("#resetKeybinds").innerHTML=icon("refresh","icon sm")+"恢复默认";$("#resetKeybinds").onclick=()=>{keybinds=JSON.parse(JSON.stringify(DEFAULT_KEYBINDS));state.settings.keybinds=JSON.parse(JSON.stringify(DEFAULT_KEYBINDS));try{localStorage.setItem(LS.settings,JSON.stringify(Object.assign({},state.settings,{keybinds:keybinds})))}catch(e){}if(serverOK)fetch("/api/data/sync",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({groups:state.groups,docs:state.docs,activeId:state.activeId,settings:{memoryScope:state.settings.memoryScope,backend:state.settings.backend,keybinds:keybinds}})}).catch(()=>{});renderKeybinds();toast("快捷键已恢复默认（折叠 = Shift+Tab）")};const bc=$("#bridgeChip");if(bc)bc.onclick=()=>showOverlay();const br=$("#boRetry");if(br)br.onclick=()=>boot(true);const bm=$("#boMock");if(bm)bm.onclick=()=>{hideOverlay();state.settings.mode="mock";state.ui.modeExplicit=true;if(!state.docs.length){seed()}if(!state.activeId&&state.docs.length)state.activeId=state.docs[0].id;save();finishUI()}}
+function wireStaticUI(){applyDark();$("#sidebar").classList.toggle("closed",!state.ui.sideOpen);$("#rightCol").classList.toggle("closed",!state.ui.rightOpen);$("#editorPane").style.flex="0 0 "+state.ui.rightSplit+"%";if(state.ui.hintSeen)$("#hintPill").style.display="none";syncThemeBtn();wireUpdateBar();$("#skillCreateBtn").innerHTML=icon("plus","icon sm");$("#skillInstallBtn").innerHTML=icon("up","icon sm");$("#skillCreateBtn").onclick=openCreateSkillModal;$("#skillInstallBtn").onclick=openInstallSkillModal;$("#memoryBtn").innerHTML=icon("book","icon sm")+"记忆";$("#memoryBtn").onclick=openMemoryModal;$("#backendSelect").addEventListener("change",e=>{state.settings.backend=e.target.value;save();syncModelChip()});$("#panModSel").addEventListener("change",e=>{state.settings.panModifier=e.target.value;save()});$("#setSave").addEventListener("click",()=>{const rf=$("#revealFolderBtn");if(rf&&!rf.dataset.bound){rf.dataset.bound="1";rf.onclick=()=>fetch("/api/data").then(r=>r.json()).then(d=>fetch("/api/data/reveal?p="+encodeURIComponent(d.dataDir))).catch(()=>toast("无法打开文件夹"))}});$("#resetKeybinds").innerHTML=icon("refresh","icon sm")+"恢复默认";$("#resetKeybinds").onclick=()=>{keybinds=JSON.parse(JSON.stringify(DEFAULT_KEYBINDS));state.settings.keybinds=JSON.parse(JSON.stringify(DEFAULT_KEYBINDS));try{localStorage.setItem(LS.settings,JSON.stringify(Object.assign({},state.settings,{keybinds:keybinds})))}catch(e){}if(serverOK)fetch("/api/data/sync",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({groups:state.groups,docs:state.docs,activeId:state.activeId,settings:{memoryScope:state.settings.memoryScope,backend:state.settings.backend,keybinds:keybinds}})}).catch(()=>{});renderKeybinds();toast("快捷键已恢复默认（折叠 = Shift+Tab）")};const bc=$("#bridgeChip");if(bc)bc.onclick=()=>showOverlay();const br=$("#boRetry");if(br)br.onclick=()=>boot(true);const bm=$("#boMock");if(bm)bm.onclick=()=>{hideOverlay();state.settings.mode="mock";state.ui.modeExplicit=true;if(!state.docs.length){seed()}if(!state.activeId&&state.docs.length)state.activeId=state.docs[0].id;save();finishUI()}}
 async function boot(retry){if(!booted){booted=true;state.customThemes=load(LS.themes,[]);state.ui=Object.assign(state.ui,load(LS.ui,{}));state.settings=Object.assign(state.settings,load(LS.settings,{}));if(state.settings.keybinds)keybinds=Object.assign({},DEFAULT_KEYBINDS,state.settings.keybinds);if(keybinds.collapse==="Space"||keybinds.collapse===" "){keybinds.collapse="Shift+Tab"}wireStaticUI()}let data=null;try{const r=await fetch("/api/data",{cache:"no-store"});if(r.ok)data=await r.json()}catch(e){}if(data){serverOK=true;hideOverlay();state.groups=(data.groups&&data.groups.length)?data.groups:state.groups;state.docs=(data.docs&&data.docs.length)?data.docs:state.docs;if(data.settings){if(data.settings.memoryScope)state.settings.memoryScope=data.settings.memoryScope;if(data.settings.backend)state.settings.backend=data.settings.backend}if(data.settings.keybinds)keybinds=Object.assign({},DEFAULT_KEYBINDS,data.settings.keybinds);if(keybinds.collapse==="Space"||keybinds.collapse===" "){keybinds.collapse="Shift+Tab"}if(!state.docs.length){seed()}state.activeId=data.activeId&&state.docs.find(d=>d.id===data.activeId)?data.activeId:(state.docs[0]&&state.docs[0].id)||null;save();setBridgeUI(true);finishUI()}else{serverOK=false;setBridgeUI(false);state.docs=load(LS.docs,null)||[];state.groups=load(LS.groups,null)||DEFAULT_GROUPS.map(n=>({name:n}));state.activeId=load(LS.active,null);if(!state.docs.length){seed();save()}if(!state.activeId||!state.docs.find(d=>d.id===state.activeId))state.activeId=state.docs[0]?state.docs[0].id:null;if(!retry){finishUI();showOverlay()}else{showOverlay()}}}
 boot(false);
 
