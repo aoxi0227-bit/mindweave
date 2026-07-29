@@ -81,6 +81,7 @@ svg{display:block}
 .group-count{font-size:10.5px;color:var(--ink-3)}
 .group-actions{display:flex;gap:2px;opacity:0;transition:opacity var(--t)}
 .group-head:hover .group-actions{opacity:1}
+.group-actions .ibtn.armed{background:var(--err);color:#fff;width:auto!important;padding:0 7px;font-size:10.5px;font-weight:600}
 .group.collapsed .group-docs{display:none}
 .doc-item{display:flex;align-items:center;gap:8px;padding:7px 8px 7px 22px;border-radius:9px;cursor:pointer;position:relative;transition:background var(--t)}
 .doc-item:hover{background:var(--sand)}
@@ -754,14 +755,16 @@ const docs=state.docs.filter(d=>d.group===g.name).sort((a,b)=>b.updatedAt-a.upda
 if(q&&!docs.length)return;
 const gDiv=document.createElement("div");gDiv.className="group"+(state.ui.collapsedGroups[g.name]?" collapsed":"");
 const head=document.createElement("div");head.className="group-head";
-head.innerHTML='<svg class="icon sm chev" viewBox="0 0 24 24">'+IC.chev+'</svg><span class="group-name">'+esc(g.name)+'</span><span class="group-count">'+docs.length+'</span><span class="group-actions"><button class="ibtn danger" title="删除分组" style="width:22px;height:22px">'+icon("trash","icon sm")+"</button></span>";
+head.innerHTML='<svg class="icon sm chev" viewBox="0 0 24 24">'+IC.chev+'</svg><span class="group-name" title="双击也可重命名">'+esc(g.name)+'</span><span class="group-count">'+docs.length+'</span><span class="group-actions"><button class="ibtn grp-ren" title="重命名分组" style="width:22px;height:22px">'+icon("pen","icon sm")+'</button>'+(g.name==="未分组"?'':'<button class="ibtn danger grp-del" title="删除分组" style="width:22px;height:22px">'+icon("trash","icon sm")+"</button>")+"</span>";
 const nameEl=head.querySelector(".group-name");
-head.querySelector(".ibtn").onclick=e=>{e.stopPropagation();const btn=e.currentTarget;
-if(btn.classList.contains("armed")){state.docs.forEach(d=>{if(d.group===g.name)d.group="未分组"});state.groups=state.groups.filter(x=>x.name!==g.name);if(!state.groups.find(x=>x.name==="未分组"))state.groups.push({name:"未分组"});persist();renderDocList();toast("分组已删除")}
-else{btn.classList.add("armed");btn.textContent="确认？";setTimeout(()=>{btn.classList.remove("armed");btn.innerHTML=icon("trash","icon sm")},2200)}};
-nameEl.addEventListener("dblclick",e=>{e.stopPropagation();const inp=document.createElement("input");inp.className="inline-input";inp.value=g.name;nameEl.replaceWith(inp);inp.focus();inp.select();
-const done=ok=>{const v=inp.value.trim();if(ok&&v&&v!==g.name){state.docs.forEach(d=>{if(d.group===g.name)d.group=v});g.name=v;persist()}renderDocList()};
-inp.addEventListener("keydown",ev=>{if(ev.key==="Enter")done(true);if(ev.key==="Escape")done(false)});inp.addEventListener("blur",()=>done(true))});
+const startRename=()=>{if(head.querySelector(".inline-input"))return;const inp=document.createElement("input");inp.className="inline-input";inp.value=g.name;nameEl.replaceWith(inp);inp.focus();inp.select();
+const done=ok=>{const v=inp.value.trim();if(ok&&v&&v!==g.name){if(state.groups.some(x=>x.name===v)){toast("已存在同名分组");renderDocList();return}state.docs.forEach(d=>{if(d.group===g.name)d.group=v});g.name=v;persist()}renderDocList()};
+inp.addEventListener("keydown",ev=>{if(ev.key==="Enter")done(true);if(ev.key==="Escape")done(false)});inp.addEventListener("blur",()=>done(true))};
+const renBtn=head.querySelector(".grp-ren");if(renBtn)renBtn.onclick=e=>{e.stopPropagation();startRename()};
+nameEl.addEventListener("dblclick",e=>{e.stopPropagation();startRename()});
+const delBtn=head.querySelector(".grp-del");if(delBtn)delBtn.onclick=e=>{e.stopPropagation();const btn=e.currentTarget;
+if(btn.classList.contains("armed")){const act=activeDoc();const actId=act?act.id:null;state.docs.forEach(d=>{if(d.group===g.name)d.group="未分组"});state.groups=state.groups.filter(x=>x.name!==g.name);if(!state.groups.find(x=>x.name==="未分组"))state.groups.push({name:"未分组"});persist();renderDocList();if(actId&&activeDoc()&&activeDoc().id===actId)loadDocToView();toast("分组已删除，文档移至未分组")}
+else{btn.classList.add("armed");btn.textContent="确认？";setTimeout(()=>{if(btn.isConnected){btn.classList.remove("armed");btn.innerHTML=icon("trash","icon sm")}},2200)}};
 head.onclick=()=>{state.ui.collapsedGroups[g.name]=!state.ui.collapsedGroups[g.name];persist();renderDocList()};
 gDiv.appendChild(head);
 const list=document.createElement("div");list.className="group-docs";
