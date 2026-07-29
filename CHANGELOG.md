@@ -2,6 +2,12 @@
 
 本项目采用语义化版本：**大模块/功能更新 → `v1.x`（如 v1.1）**；**小调整/修复 → `v1.x.y`（如 v1.0.1）**。
 
+## [v1.1.2] — Windows 兼容性修复
+
+- **Windows 检测不到任何 CLI**：npm 全局 CLI 在 Windows 是 `claude.cmd` / `kimi.cmd` 等 shim，`findBin` 只按裸名查找永远找不到，且 `spawn` 直接调 .cmd 会 ENOENT。现 `findBin` 在 win32 自动追加 `.cmd/.exe/.bat/.ps1` 后缀探测（含 `%APPDATA%\npm` 候选目录），`.cmd/.bat` 经 cmd shell 启动（`server.js` 与 `data-store.js` 的 collectCli 同步修复）。
+- **start.ps1 启动即失败**：`Start-Process` 的 `-WindowStyle Hidden` 与 `-RedirectStandardOutput` 参数冲突会抛错，桥接永远起不来；改由 `cmd /c` 内部重定向日志。
+- **Windows 解压中文文件名乱码**：三端 zip 此前用 Info-ZIP 打包，中文文件名不带 UTF-8 标志位，Windows 资源管理器/部分工具解压出乱码名；`build-release.sh` 改用 python3 zipfile（自动打标志），并在《跨平台说明》补充 7-Zip / `tar -xf` 建议。
+
 ## [v1.1.1] — 桥接健壮性修复 + 三端打包规范
 
 ### 修复（链接 API / 本地 CLI / 本地 LLM / 启动服务）
@@ -10,6 +16,7 @@
 - **CLI memory 总结必失败**：`/api/backends` 返回的 spec 缺 `bin`，自动 memory 总结 spawn(undefined) 静默 500；已补上。
 - **非 claude CLI 被前端误拒**：CLI 模式闸门此前看 `srvHealth.ready`（仅代表 claude+代理），只有 kimi/qwen/opencode 的用户发不出消息；改为查 `/api/backends` 是否有可用后端，设置面板状态同理展示多 CLI。
 - **system prompt 双重注入**：CLI 路径（promptText 内嵌 + `--system-prompt`）与 HTTP 代理路径（messages 里的 system 被拼两次）各注入两遍，浪费 token；现各只注入一次。
+- **`/api/chat` 代理路径必崩**：`handleChat` 与 `handleChatHttp` 双重 `writeHead` 触发 `ERR_HTTP_HEADERS_SENT` 未捕获异常、整个进程崩溃；已加 `headersSent` 守卫。
 - **LM Studio 接入不填模型名**：探测到的模型列表未保存，「接入 LM Studio」后测试连接必失败；现与 Ollama 一致自动填入首个模型。
 - **OpenAI 兼容直连健壮性**：测试连接前校验模型名非空。
 

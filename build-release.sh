@@ -22,8 +22,21 @@ pack() {
   done
   chmod +x "$stage"/*.sh 2>/dev/null || true
   find "$stage" -name .DS_Store -delete 2>/dev/null || true
-  ( cd "$BUILD" && zip -qr "$OUT/mindweave-$VER-$platform.zip" mindweave )
-  echo "✓ dist/mindweave-$VER-$platform.zip"
+  # 用 python3 打包：中文文件名自动带 UTF-8 标志位（Info-ZIP 不打，Windows 解压会乱码）
+  STAGE="$stage" OUT="$OUT/mindweave-$VER-$platform.zip" python3 - <<'PY'
+import os, zipfile
+stage = os.environ["STAGE"]; out = os.environ["OUT"]
+root = os.path.dirname(stage)
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    for base, dirs, files in os.walk(stage):
+        dirs.sort(); files.sort()
+        if not dirs and not files:
+            z.write(base, os.path.relpath(base, root))
+        for f in files:
+            fp = os.path.join(base, f)
+            z.write(fp, os.path.relpath(fp, root))
+print("✓ " + out)
+PY
 }
 
 pack macos   start.sh 启动思脉.sh 启动思脉.applescript build-macos-app.sh 思脉MindWeave.app

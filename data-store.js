@@ -151,7 +151,10 @@ function collectCli(spec, prompt, system) {
     args.push(spec.prompt[0], promptText);
     if (spec.flags) for (const f of spec.flags) args.push(f);
     if (spec.out && spec.out.length) args.push(...spec.out);
-    const child = spawn(spec.bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    // Windows 上 npm 全局 CLI 是 .cmd/.bat shim，必须经 cmd shell 启动
+    const spawnOpts = { stdio: ["ignore", "pipe", "pipe"] };
+    if (process.platform === "win32" && /\.(cmd|bat)$/i.test(String(spec.bin))) spawnOpts.shell = true;
+    const child = spawn(spec.bin, args, spawnOpts);
     let buf = "", out = "";
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (c) => { buf += c; let i; while ((i = buf.indexOf("\n")) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); parseCliLine(l, t => (out += t)); } });

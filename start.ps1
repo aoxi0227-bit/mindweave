@@ -9,7 +9,9 @@ $running=$false
 try{$h=Invoke-WebRequest -Uri "$($URL)api/health" -UseBasicParsing -TimeoutSec 2;if($h.Content -match '"ready"'){$running=$true}}catch{}
 if(-not $running){
   Write-Host "[mindweave] starting bridge on port $($env:PORT) ..."
-  Start-Process -FilePath $node.Source -ArgumentList 'server.js' -WorkingDirectory $DIR -WindowStyle Hidden -RedirectStandardOutput $LOG -RedirectStandardError "$LOG.err" | Out-Null
+  # -WindowStyle 与 -RedirectStandardOutput 不能同时使用；改由 cmd /c 内部重定向
+  $cmdArgs = '/c "node server.js 1>"' + $LOG + '" 2>&1"'
+  Start-Process -FilePath 'cmd.exe' -ArgumentList $cmdArgs -WorkingDirectory $DIR -WindowStyle Hidden | Out-Null
   $ok=$false
   for($i=0;$i -lt 40;$i++){try{Invoke-WebRequest -Uri "$($URL)api/health" -UseBasicParsing -TimeoutSec 2|Out-Null;$ok=$true;break}catch{Start-Sleep -Milliseconds 250}}
   if(-not $ok){Write-Host "[mindweave] bridge failed. Log: $LOG" -ForegroundColor Red;Get-Content $LOG -ErrorAction SilentlyContinue;Read-Host 'Press Enter';exit 1}

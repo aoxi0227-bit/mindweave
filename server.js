@@ -19,18 +19,30 @@ function readCliConfig() {
     return {};
   }
 }
+function findBin(names, extra) {
+  const pathEnv = (process.env.PATH || "").split(path.delimiter);
+  const cands = [].concat(extra || []);
+  for (const n of names) for (const d of pathEnv) cands.push(path.join(d, n));
+  const exts = process.platform === "win32" ? [".cmd", ".exe", ".bat", ".ps1"] : [];
+  for (const c of cands) {
+    try { if (c && fs.existsSync(c)) return c; } catch (e) {}
+    for (const e of exts) { try { if (c && fs.existsSync(c + e)) return c + e; } catch (er) {} }
+  }
+  return null;
+}
 function detectClaudeBin() {
-  const cands = [
+  return findBin(["claude"], [
     path.join(os.homedir(), ".local", "bin", "claude"),
     "/opt/homebrew/bin/claude",
     "/usr/local/bin/claude",
-  ];
-  for (const c of cands) {
-    try {
-      if (fs.existsSync(c)) return c;
-    } catch (e) {}
-  }
-  return null;
+    path.join(process.env.APPDATA || "", "npm", "claude"),
+  ]);
+}
+// Windows 上 npm 全局 CLI 是 .cmd/.bat shim，必须经 cmd shell 启动
+function spawnCli(bin, args, opts) {
+  const o = Object.assign({}, opts || {});
+  if (process.platform === "win32" && /\.(cmd|bat)$/i.test(String(bin))) o.shell = true;
+  return spawn(bin, args, o);
 }
 function httpModFor(u) { return u.protocol === "https:" ? require("https") : http; }
 function defaultPortFor(u) { return u.port || (u.protocol === "https:" ? 443 : 80); }
@@ -95,7 +107,7 @@ async function health(force) {
   if (bin) {
     try {
       const v = await new Promise((res) => {
-        const p = spawn(bin, ["--version"], { stdio: ["ignore", "pipe", "ignore"] });
+        const p = spawnCli(bin, ["--version"], { stdio: ["ignore", "pipe", "ignore"] });
         let o = "";
         p.stdout.on("data", (d) => (o += d));
         p.on("close", () => res(o.trim()));
@@ -317,28 +329,21 @@ async function handleChatHttp(req, res, payload, system, model) {
   });
 }
 
-function findBin(names, extra) {
-  const pathEnv = (process.env.PATH || "").split(path.delimiter);
-  const cands = [].concat(extra || []);
-  for (const n of names) for (const d of pathEnv) cands.push(path.join(d, n));
-  for (const c of cands) { try { if (c && fs.existsSync(c)) return c; } catch (e) {} }
-  return null;
-}
 let _verCache = {};
 function cliVersion(bin) {
   if (_verCache[bin] !== undefined) return Promise.resolve(_verCache[bin]);
   return new Promise((res) => {
-    const p = spawn(bin, ["--version"], { stdio: ["ignore", "pipe", "ignore"] });
+    const p = spawnCli(bin, ["--version"], { stdio: ["ignore", "pipe", "ignore"] });
     let o = ""; let done = false; const fin = (v) => { if (done) return; done = true; _verCache[bin] = v; res(v); };
     p.stdout.on("data", (d) => (o += d)); p.on("close", () => fin(o.trim().split("\n")[0])); p.on("error", () => fin(""));
     setTimeout(() => { try { p.kill(); } catch (e) {} fin(o.trim().split("\n")[0]); }, 2500);
   });
 }
 const CLI_SPECS = [
-  { id: "claude", names: ["claude"], extra: [path.join(os.homedir(), ".local", "bin", "claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude"], prompt: ["-p"], sys: ["--system-prompt"], flags: ["--verbose"], out: ["--output-format", "stream-json"], label: "Claude Code" },
-  { id: "kimi", names: ["kimi"], extra: [path.join(os.homedir(), ".kimi-code", "bin", "kimi")], prompt: ["-p"], sys: [], out: ["--output-format", "stream-json"], label: "Kimi Code" },
-  { id: "qwen", names: ["qwen"], extra: ["/opt/homebrew/bin/qwen", "/usr/local/bin/qwen"], prompt: ["-p"], sys: ["--system-prompt"], out: [], label: "Qwen Code" },
-  { id: "opencode", names: ["opencode"], extra: [path.join(os.homedir(), ".opencode", "bin", "opencode")], prompt: ["run"], sys: [], out: [], label: "OpenCode" },
+  { id: "claude", names: ["claude"], extra: [path.join(os.homedir(), ".local", "bin", "claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude", path.join(process.env.APPDATA || "", "npm", "claude")], prompt: ["-p"], sys: ["--system-prompt"], flags: ["--verbose"], out: ["--output-format", "stream-json"], label: "Claude Code" },
+  { id: "kimi", names: ["kimi"], extra: [path.join(os.homedir(), ".kimi-code", "bin", "kimi"), path.join(process.env.APPDATA || "", "npm", "kimi")], prompt: ["-p"], sys: [], out: ["--output-format", "stream-json"], label: "Kimi Code" },
+  { id: "qwen", names: ["qwen"], extra: ["/opt/homebrew/bin/qwen", "/usr/local/bin/qwen", path.join(process.env.APPDATA || "", "npm", "qwen")], prompt: ["-p"], sys: ["--system-prompt"], out: [], label: "Qwen Code" },
+  { id: "opencode", names: ["opencode"], extra: [path.join(os.homedir(), ".opencode", "bin", "opencode"), path.join(process.env.APPDATA || "", "npm", "opencode")], prompt: ["run"], sys: [], out: [], label: "OpenCode" },
 ];
 function detectClis() {
   return CLI_SPECS.map((sp) => { const bin = findBin(sp.names, sp.extra); return { id: sp.id, label: sp.label, bin, version: null }; }).filter((x) => x.bin);
@@ -366,7 +371,7 @@ function runCliChat(spec, promptText, systemText, write) {
   if (!bin) { write({ error: "找不到 " + (spec.label || spec.id) + " 的可执行文件" }); return; }
   const argv = args.map((a) => String(a == null ? "" : a));
   console.log("[runCliChat] spawn", bin, JSON.stringify(argv));
-  const child = spawn(String(bin), argv, { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawnCli(String(bin), argv, { stdio: ["ignore", "pipe", "pipe"] });
   let buf = "";
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk) => { buf += chunk; let i; while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); parseCliLine(line, (t) => write({ text: t })); } });
