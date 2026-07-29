@@ -4,5 +4,6 @@
     "https://github.com/anthropics/skills"
   ],
   "disabledSkills": [],
-  "backend": "qwen"
+  "backend": "qwen",
+  "activeId": "9dkid5q"
 }

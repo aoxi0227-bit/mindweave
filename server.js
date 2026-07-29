@@ -32,13 +32,15 @@ function detectClaudeBin() {
   }
   return null;
 }
+function httpModFor(u) { return u.protocol === "https:" ? require("https") : http; }
+function defaultPortFor(u) { return u.port || (u.protocol === "https:" ? 443 : 80); }
 function httpJson(url, opts, timeoutMs) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
-    const req = http.request(
+    const req = httpModFor(u).request(
       {
         hostname: u.hostname,
-        port: u.port || 80,
+        port: defaultPortFor(u),
         path: u.pathname + u.search,
         method: opts.method || "GET",
         headers: opts.headers || {},
@@ -63,10 +65,14 @@ const LOCKFILE = process.env.LOCKFILE || path.join(ROOT, ".server.lock");
 let clients = 0, lastSeen = Date.now(), graceTimer = null, hbTimer = null;
 const GRACE_MS = 7000, HB_TIMEOUT_MS = 120000, START_GRACE_MS = 90000;
 const startedAt = Date.now();
-function writePid() { try { fs.writeFileSync(PIDFILE, String(process.pid)); } catch (e) {} }
+const APP_VERSION = (() => { try { return fs.readFileSync(path.join(ROOT, "VERSION"), "utf8").trim() || "dev"; } catch (e) { return "dev"; } })();
+function writePid() {
+  try { fs.writeFileSync(PIDFILE, String(process.pid)); } catch (e) {}
+  try { fs.writeFileSync(LOCKFILE, String(process.pid)); } catch (e) {}
+}
 function clearPid() {
   try { const p = parseInt(fs.readFileSync(PIDFILE, "utf8"), 10); if (p === process.pid) fs.unlinkSync(PIDFILE); } catch (e) {}
-  try { fs.unlinkSync(LOCKFILE); } catch (e) {}
+  try { const p = parseInt(fs.readFileSync(LOCKFILE, "utf8"), 10); if (p === process.pid) fs.unlinkSync(LOCKFILE); } catch (e) {}
 }
 function scheduleExit() {
   if (graceTimer) return;
@@ -119,6 +125,7 @@ async function health(force) {
   }
   touch();
   const val = {
+    version: APP_VERSION,
     cli: !!bin,
     cliPath: bin,
     cliVersion,
@@ -185,6 +192,7 @@ async function handleChatHttp(req, res, payload, system, model) {
   const env = readCliConfig();
   const baseUrl = (env.ANTHROPIC_BASE_URL || "").replace(/\/+$/, "");
   if (!baseUrl) {
+    if (res.headersSent) { try { res.write("data: " + JSON.stringify({ error: "未读取到本地 Claude CLI 的 ANTHROPIC_BASE_URL（~/.claude/settings.json）" }) + "\n\n"); res.end(); } catch (e) {} return; }
     sendJson(res, 500, { error: "未读取到本地 Claude CLI 的 ANTHROPIC_BASE_URL（~/.claude/settings.json）" });
     return;
   }
@@ -196,7 +204,7 @@ async function handleChatHttp(req, res, payload, system, model) {
   }
   if (!convo.length) convo.push({ role: "user", content: "你好" });
 
-  res.writeHead(200, {
+  if (!res.headersSent) res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-store",
     "Access-Control-Allow-Origin": "*",
@@ -220,10 +228,10 @@ async function handleChatHttp(req, res, payload, system, model) {
   try {
     upstream = await new Promise((resolve, reject) => {
       const u = new URL(baseUrl + "/v1/messages");
-      const r = http.request(
+      const r = httpModFor(u).request(
         {
           hostname: u.hostname,
-          port: u.port || 80,
+          port: defaultPortFor(u),
           path: u.pathname,
           method: "POST",
           headers: {
@@ -300,10 +308,12 @@ async function handleChatHttp(req, res, payload, system, model) {
       res.end();
     } catch (e2) {}
   });
-  req.on("close", () => {
-    try {
-      upstream.destroy();
-    } catch (e) {}
+  res.on("close", () => {
+    if (!res.writableEnded) {
+      try {
+        upstream.destroy();
+      } catch (e) {}
+    }
   });
 }
 
@@ -325,10 +335,10 @@ function cliVersion(bin) {
   });
 }
 const CLI_SPECS = [
-  { id: "claude", names: ["claude"], extra: [path.join(os.homedir(), ".local", "bin", "claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude"], prompt: ["-p"], sys: ["--system-prompt"], flags: ["--verbose"], label: "Claude Code" },
-  { id: "kimi", names: ["kimi"], extra: [path.join(os.homedir(), ".kimi-code", "bin", "kimi")], prompt: ["-p"], sys: [], label: "Kimi Code" },
-  { id: "qwen", names: ["qwen"], extra: ["/opt/homebrew/bin/qwen", "/usr/local/bin/qwen"], prompt: ["-p"], sys: ["--system-prompt"], label: "Qwen Code" },
-  { id: "opencode", names: ["opencode"], extra: [path.join(os.homedir(), ".opencode", "bin", "opencode")], prompt: ["run"], sys: [], label: "OpenCode" },
+  { id: "claude", names: ["claude"], extra: [path.join(os.homedir(), ".local", "bin", "claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude"], prompt: ["-p"], sys: ["--system-prompt"], flags: ["--verbose"], out: ["--output-format", "stream-json"], label: "Claude Code" },
+  { id: "kimi", names: ["kimi"], extra: [path.join(os.homedir(), ".kimi-code", "bin", "kimi")], prompt: ["-p"], sys: [], out: ["--output-format", "stream-json"], label: "Kimi Code" },
+  { id: "qwen", names: ["qwen"], extra: ["/opt/homebrew/bin/qwen", "/usr/local/bin/qwen"], prompt: ["-p"], sys: ["--system-prompt"], out: [], label: "Qwen Code" },
+  { id: "opencode", names: ["opencode"], extra: [path.join(os.homedir(), ".opencode", "bin", "opencode")], prompt: ["run"], sys: [], out: [], label: "OpenCode" },
 ];
 function detectClis() {
   return CLI_SPECS.map((sp) => { const bin = findBin(sp.names, sp.extra); return { id: sp.id, label: sp.label, bin, version: null }; }).filter((x) => x.bin);
@@ -351,7 +361,7 @@ function runCliChat(spec, promptText, systemText, write) {
   if (systemText && spec.sys && spec.sys.length) args.push(spec.sys[0], systemText);
   args.push(spec.prompt[0], promptText);
   if (spec.flags) for (const f of spec.flags) args.push(f);
-  args.push("--output-format", "stream-json");
+  if (spec.out && spec.out.length) args.push(...spec.out);
   let bin = spec.bin; if (!bin) { const sp = CLI_SPECS.find((x) => x.id === spec.id); bin = sp ? findBin(sp.names, sp.extra) : null; }
   if (!bin) { write({ error: "找不到 " + (spec.label || spec.id) + " 的可执行文件" }); return; }
   const argv = args.map((a) => String(a == null ? "" : a));
@@ -385,12 +395,14 @@ async function handleChat(req, res) {
   if (backend.type === "cli") {
     let promptText = convo.map((m) => (m.role === "assistant" ? "助手：" : "用户：") + (m.content || "")).join("\n\n");
     if (!promptText) promptText = "你好";
-    if (system) promptText = "[系统指令]\n" + system + "\n\n[对话]\n" + promptText + "\n\n请按以上系统指令回答最后一条用户消息。";
-    const child = runCliChat(backend.spec, promptText, system, write);
-    req.on("close", () => { try { child.kill(); } catch (e) {} });
+    const spec = backend.spec || {};
+    const hasSysFlag = !!(spec.sys && spec.sys.length);
+    if (system && !hasSysFlag) promptText = "[系统指令]\n" + system + "\n\n[对话]\n" + promptText + "\n\n请按以上系统指令回答最后一条用户消息。";
+    const child = runCliChat(spec, promptText, system, write);
+    res.on("close", () => { if (!res.writableEnded) { try { child && child.kill(); } catch (e) {} } });
     return;
   }
-  await handleChatHttp(req, res, payload, system, backend.model || payload.model);
+  await handleChatHttp(req, res, { ...payload, messages: convo }, system, backend.model || payload.model);
 }
 function collectTextHttp(baseUrl, key, model, messages) { return DS.collectHttp(baseUrl, key, model, messages); }
 async function getBackend() { const h = await health(false); const backs = await listBackends(h); const id = (require("./data-store").readCfg().backend) || ""; let b = backs.find((x) => x.id === id) || backs.find((x) => x.ready) || backs[0]; if (!b) return null; if (b.type === "http") { const env = readCliConfig(); return { type: "http", baseUrl: (env.ANTHROPIC_BASE_URL || "").replace(/\/+$/, ""), key: env.ANTHROPIC_API_KEY || "x", model: b.model }; } return { type: "cli", spec: b.spec }; }
@@ -399,7 +411,7 @@ async function listBackends(h) {
   if (h.proxyOk) out.push({ id: "claude-proxy", label: "本地代理 (cc-switch)", type: "http", ready: true, models: h.models, model: h.model });
   const clis = detectClis();
   await Promise.all(clis.map(async (c) => { c.version = await cliVersion(c.bin); }));
-  for (const c of clis) out.push({ id: c.id, label: c.label + " CLI", type: "cli", ready: true, version: c.version, spec: CLI_SPECS.find((s) => s.id === c.id) });
+  for (const c of clis) out.push({ id: c.id, label: c.label + " CLI", type: "cli", ready: true, version: c.version, spec: Object.assign({}, CLI_SPECS.find((s) => s.id === c.id), { bin: c.bin }) });
   return out;
 }
 const server = http.createServer(async (req, res) => {
@@ -422,7 +434,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (req.method === "GET" && (url === "/api/hello" || url === "/api/ping")) {
-    clients++; touch(); sendJson(res, 200, { ok: true, clients }); return;
+    if (url === "/api/hello") clients++; touch(); sendJson(res, 200, { ok: true, clients }); return;
   }
   if (req.method === "POST" && (url === "/api/ping" || url === "/api/hello")) {
     if (url === "/api/hello") clients++; touch(); sendJson(res, 200, { ok: true, clients }); return;
@@ -454,8 +466,15 @@ const server = http.createServer(async (req, res) => {
   if (mD && req.method === "DELETE") { SK.deleteSkill(decodeURIComponent(mD[1])); sendJson(res, 200, { ok: true }); return; }
   if (url === "/api/memory" || url === "/api/memory/") {
     const q = new URL(req.url, "http://x").searchParams; const scope = q.get("scope") || SK.readCfg().memoryScope || "global"; const noteId = q.get("noteId") || null;
-    if (req.method === "GET") { sendJson(res, 200, { scope, entries: { note: DS.readNoteMem(noteId || "") } }); return; }
-    if (req.method === "POST") { const b = JSON.parse(await readBody(req)); DS.writeNoteMem(b.noteId || noteId || "", b.text || ""); sendJson(res, 200, { ok: true }); return; }
+    if (req.method === "GET") { sendJson(res, 200, { scope, entries: { global: SK.readMem("global"), note: DS.readNoteMem(noteId || "") } }); return; }
+    if (req.method === "POST") {
+      const b = JSON.parse(await readBody(req));
+      const txt = b.text !== undefined ? b.text : (b.txt || "");
+      const sc = b.scope || scope;
+      if (sc === "global") SK.writeMem("global", null, txt);
+      else DS.writeNoteMem(b.noteId || noteId || "", txt);
+      sendJson(res, 200, { ok: true }); return;
+    }
   }
   if (req.method === "GET" && url === "/api/data") { sendJson(res, 200, DS.loadData()); return; }
   if (req.method === "POST" && url === "/api/data/sync") { try { const b = JSON.parse(await readBody(req)); sendJson(res, 200, DS.syncData(b)); } catch (e) { sendJson(res, 500, { error: e.message }); } return; }
@@ -484,6 +503,15 @@ const server = http.createServer(async (req, res) => {
   }
   res.writeHead(404);
   res.end("not found");
+});
+
+server.on("error", (e) => {
+  if (e && e.code === "EADDRINUSE") {
+    console.log("[mindweave-bridge] 端口 " + PORT + " 被占用，可能已有实例在运行，直接退出。");
+    process.exit(0);
+  }
+  console.error("[mindweave-bridge] server error:", e && e.message);
+  process.exit(1);
 });
 
 server.listen(PORT, () => {

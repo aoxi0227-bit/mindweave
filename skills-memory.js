@@ -93,4 +93,4 @@ function memoryPrompt(noteId) {
 function buildSystem(base, noteId) { return base + skillsPrompt() + memoryPrompt(noteId); }
 function catalogs() { ensure(); const c = readCfg(); return { registries: c.registries || [], memoryScope: c.memoryScope || "global", skills: listSkills().map(s => ({ name: s.name, displayName: s.displayName, description: s.description, enabled: skillEnabled(s.name), symlink: !!s.symlink, global: !!s.global })) }; }
 
-module.exports = { ensure, readCfg, writeCfg, listSkills, getSkill, skillEnabled, setSkillEnabled, deleteSkill, createSkill, linkSkill, readMem, writeMem, combinedMem, buildSystem, catalogs };
+module.exports = { ensure, readCfg, writeCfg, listSkills, getSkill, skillEnabled, setSkillEnabled, deleteSkill, createSkill, linkSkill, skillsPrompt, readMem, writeMem, combinedMem, buildSystem, catalogs };

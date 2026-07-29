@@ -28,7 +28,9 @@ function parseNoteFile(fp) {
   let meta = {}, body = txt;
   const m = txt.match(/^---\n([\s\S]*?)\n---\n?/);
   if (m) { body = txt.slice(m[0].length); for (const line of m[1].split("\n")) { const mm = line.match(/^([a-zA-Z0-9_]+):\s*(.*)$/); if (mm) meta[mm[1]] = mm[2].trim(); } }
-  return { id: meta.id || path.basename(fp, ".md"), title: meta.title || path.basename(fp, ".md"), group: meta.group || UNGROUPED, order: parseInt(meta.order || "0", 10) || 0, createdAt: parseInt(meta.createdAt || "0", 10) || 0, updatedAt: parseInt(meta.updatedAt || "0", 10) || 0, template: meta.template || "blank", markdown: body.replace(/\n$/, "") };
+  const note = { id: meta.id || path.basename(fp, ".md"), title: meta.title || path.basename(fp, ".md"), group: meta.group || UNGROUPED, order: parseInt(meta.order || "0", 10) || 0, createdAt: parseInt(meta.createdAt || "0", 10) || 0, updatedAt: parseInt(meta.updatedAt || "0", 10) || 0, template: meta.template || "blank", markdown: body.replace(/\n$/, "") };
+  try { const sidecar = fp.replace(/\.md$/, ".chat.json"); if (fs.existsSync(sidecar)) { const chat = JSON.parse(fs.readFileSync(sidecar, "utf8")); if (Array.isArray(chat)) note.chat = chat; } } catch (e) {}
+  return note;
 }
 function serializeNote(d) {
   const fm = ["---", "id: " + d.id, "title: " + (d.title || "").replace(/\n/g, " "), "group: " + (d.group || UNGROUPED), "order: " + (d.order || 0), "createdAt: " + (d.createdAt || 0), "updatedAt: " + (d.updatedAt || 0), "template: " + (d.template || "blank"), "---", ""].join("\n");
@@ -58,7 +60,7 @@ function readAllNotes() {
 function loadData() {
   ensure();
   const cfg = readCfg();
-  return { groups: readGroups(), docs: readAllNotes(), activeId: null, settings: { memoryScope: cfg.memoryScope || "note", backend: cfg.backend || "", registries: cfg.registries || [] }, dataDir: DATA };
+  return { groups: readGroups(), docs: readAllNotes(), activeId: cfg.activeId || null, settings: { memoryScope: cfg.memoryScope || "note", backend: cfg.backend || "", registries: cfg.registries || [] }, dataDir: DATA };
 }
 function syncData(payload) {
   ensure();
@@ -67,16 +69,25 @@ function syncData(payload) {
   for (const g of groups) ensureGroupDir(g.name);
   writeGroups(groups);
   const keep = new Set();
-  for (const d of docs) { if (!d.id) continue; keep.add(d.group + "/" + sanitize(d.id) + ".md"); fs.writeFileSync(notePath(d), serializeNote(d)); }
-  // prune note files no longer present
+  for (const d of docs) {
+    if (!d.id) continue;
+    const gdir = d.group === UNGROUPED ? UNGROUPED : sanitize(d.group || UNGROUPED);
+    keep.add(gdir + "/" + sanitize(d.id) + ".md");
+    const np = notePath(d);
+    fs.writeFileSync(np, serializeNote(d));
+    if (Array.isArray(d.chat)) { try { fs.writeFileSync(np.replace(/\.md$/, ".chat.json"), JSON.stringify(d.chat)); } catch (e) {} }
+  }
+  // prune note files no longer present (连同对应 chat sidecar 一起删)
   let ents = []; try { ents = fs.readdirSync(NOTES, { withFileTypes: true }); } catch (e) {}
+  const pruneMd = (fp) => { try { fs.unlinkSync(fp); } catch (er) {} try { fs.unlinkSync(fp.replace(/\.md$/, ".chat.json")); } catch (er) {} };
   for (const e of ents) {
-    if (e.isFile() && e.name.endsWith(".md")) { if (!keep.has(UNGROUPED + "/" + e.name)) try { fs.unlinkSync(path.join(NOTES, e.name)); } catch (er) {} }
-    else if (e.isDirectory()) { let sub = []; try { sub = fs.readdirSync(path.join(NOTES, e.name)); } catch (er) {} for (const f of sub) if (f.endsWith(".md") && !keep.has(e.name + "/" + f)) try { fs.unlinkSync(path.join(NOTES, e.name, f)); } catch (er) {} }
+    if (e.isFile() && e.name.endsWith(".md")) { if (!keep.has(UNGROUPED + "/" + e.name)) pruneMd(path.join(NOTES, e.name)); }
+    else if (e.isDirectory()) { let sub = []; try { sub = fs.readdirSync(path.join(NOTES, e.name)); } catch (er) {} for (const f of sub) if (f.endsWith(".md") && !keep.has(e.name + "/" + f)) pruneMd(path.join(NOTES, e.name, f)); }
   }
   // merge settings (preserve server-only keys)
   const cfg = readCfg();
   if (payload.settings) { if (payload.settings.memoryScope) cfg.memoryScope = payload.settings.memoryScope; if (payload.settings.backend !== undefined) cfg.backend = payload.settings.backend; if (payload.settings.registries) cfg.registries = payload.settings.registries; }
+  if (payload.activeId !== undefined) cfg.activeId = payload.activeId;
   writeCfg(cfg);
   return { ok: true, count: docs.length };
 }
@@ -132,13 +143,14 @@ function parseCliLine(line, onText) {
 }
 function collectCli(spec, prompt, system) {
   return new Promise((resolve) => {
+    if (!spec || !spec.bin) { resolve(""); return; }
     const args = [];
+    let promptText = prompt;
     if (system && spec.sys && spec.sys.length) args.push(spec.sys[0], system);
-    if (system) args.push(...(spec.flags || []));
-    args.push(spec.prompt[0], (system ? "[系统指令]\n" + system + "\n\n[任务]\n" : "") + prompt);
-    if (spec.flags && system) {} // flags already added above conditionally
-    if (!system && spec.flags) for (const f of spec.flags) args.push(f);
-    args.push("--output-format", "stream-json");
+    else if (system) promptText = "[系统指令]\n" + system + "\n\n[任务]\n" + prompt;
+    args.push(spec.prompt[0], promptText);
+    if (spec.flags) for (const f of spec.flags) args.push(f);
+    if (spec.out && spec.out.length) args.push(...spec.out);
     const child = spawn(spec.bin, args, { stdio: ["ignore", "pipe", "pipe"] });
     let buf = "", out = "";
     child.stdout.setEncoding("utf8");
@@ -150,10 +162,10 @@ function collectCli(spec, prompt, system) {
 }
 function collectHttp(baseUrl, key, model, messages) {
   return new Promise((resolve) => {
-    const http = require("http");
     const body = JSON.stringify({ model: model || "MiniMax-M3", max_tokens: 1200, stream: false, messages });
     const u = new URL(baseUrl + "/v1/messages");
-    const r = http.request({ hostname: u.hostname, port: u.port || 80, path: u.pathname, method: "POST", headers: { "Content-Type": "application/json", "x-api-key": key || "x", "anthropic-version": "2023-06-01", "Content-Length": Buffer.byteLength(body) } }, (res) => {
+    const mod = u.protocol === "https:" ? require("https") : require("http");
+    const r = mod.request({ hostname: u.hostname, port: u.port || (u.protocol === "https:" ? 443 : 80), path: u.pathname, method: "POST", headers: { "Content-Type": "application/json", "x-api-key": key || "x", "anthropic-version": "2023-06-01", "Content-Length": Buffer.byteLength(body) } }, (res) => {
       let t = ""; res.setEncoding("utf8"); res.on("data", d => (t += d)); res.on("end", () => {
         if (res.statusCode !== 200) return resolve("");
         try { const j = JSON.parse(t); const c = (j.content || []).filter(x => x.type === "text").map(x => x.text).join(""); resolve(c.trim()); } catch (e) { resolve(""); }

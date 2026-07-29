@@ -2,6 +2,40 @@
 
 本项目采用语义化版本：**大模块/功能更新 → `v1.x`（如 v1.1）**；**小调整/修复 → `v1.x.y`（如 v1.0.1）**。
 
+## [v1.1.1] — 桥接健壮性修复 + 三端打包规范
+
+### 修复（链接 API / 本地 CLI / 本地 LLM / 启动服务）
+- **https 上游全断**：`server.js` / `data-store.js` 全链路只走 `http` 模块且默认端口写死 80——`ANTHROPIC_BASE_URL` 为 https 时探测与对话永远失败；现按协议自动选择 http/https 模块与默认端口（`/v1/models`、`/v1/messages`、skills 安装均受益）。
+- **CLI 参数拼接**：`--output-format stream-json` 此前无脑拼给所有 CLI（qwen / opencode 不支持必挂）；现按 spec 分别配置（claude / kimi 用 stream-json，qwen / opencode 走纯文本解析）。
+- **CLI memory 总结必失败**：`/api/backends` 返回的 spec 缺 `bin`，自动 memory 总结 spawn(undefined) 静默 500；已补上。
+- **非 claude CLI 被前端误拒**：CLI 模式闸门此前看 `srvHealth.ready`（仅代表 claude+代理），只有 kimi/qwen/opencode 的用户发不出消息；改为查 `/api/backends` 是否有可用后端，设置面板状态同理展示多 CLI。
+- **system prompt 双重注入**：CLI 路径（promptText 内嵌 + `--system-prompt`）与 HTTP 代理路径（messages 里的 system 被拼两次）各注入两遍，浪费 token；现各只注入一次。
+- **LM Studio 接入不填模型名**：探测到的模型列表未保存，「接入 LM Studio」后测试连接必失败；现与 Ollama 一致自动填入首个模型。
+- **OpenAI 兼容直连健壮性**：测试连接前校验模型名非空。
+
+### 修复（启动服务 / 数据）
+- **单实例锁是死代码**：`.server.lock` 从未被写入，每次启动都重复 spawn；现正常写入/校验，端口占用时友好退出而非堆栈崩溃。
+- **`.app` 存在后浏览器打不开**：`start.sh` ↔ `.app` ↔ `启动思脉.sh` 互相 open 死循环；`启动思脉.sh` 改为标记 wrapper，从 `.app` 内启动时直接开浏览器。
+- **Mock/API 模式下后台 2 分钟自杀**：心跳此前只在 claude 就绪时启动；现桥接在跑即心跳，关页自停逻辑不变。
+- **memory 一存就清空**：前端发 `txt` 后端读 `text`；已对齐，并补上全局记忆的读写路径（此前全局记忆 UI 永远空白）。
+- **Skills 从未注入对话**：`skillsPrompt()` 未导出，`buildSystem` 永远拿不到；已导出。
+- **聊天记录刷新即丢**：`/api/data/sync` 丢弃 chat；现按笔记 sidecar（`<id>.chat.json`）落盘，activeId 一并持久化，重开恢复到上次文档。
+- **分组名含特殊字符写完即被剪**：syncData 剪枝键未做 sanitize；已修复。
+- **Windows 启动器误判**：netstat 探测不验身份，4317 被任意程序占用就跳过启动；改为探测 `/api/health` 特征字段。
+- **模板弹层无入口**：「新建文档」此前直接建空白图，4 套场景模板触达不到；现新建时弹出模板选择。
+- **Mock 模式误触发 memory 总结**（白白起一次 LLM 调用）；已加模式判断。
+
+### 工程
+- 新增 `VERSION` 文件与 `build-release.sh`：一条命令产出 `dist/mindweave-<版本>-{macos,windows,linux}.zip` 三端包（端口 + 浏览器形式；exe/dmg/deb 后期再议）。版本与发布规范见 `工程文档.md` §11。
+
+## [v1.1.1] — 快捷键自定义 + 折叠改 Shift+Tab（小更新）
+
+### 调整
+- **折叠快捷键由 `Space` 改为 `Shift+Tab`**（避免与输入空格冲突）。
+- **设置新增「快捷键」自定义**：8 个动作（新建子/同级、折叠、删除、四向导航）均可点「录制」重绑，支持 Shift/Ctrl/Alt/Meta 组合；**持久化**到本地与文件夹配置；可「恢复默认」。
+### 修复
+- 修复 document 键位守卫 `e.target.matches` 在合成/无 target 事件下抛错，导致折叠等绑定动作不生效。
+
 ## [v1.1] — 本地数据落盘 + 按组记忆 + 多后端识别 + 启动体验
 
 ### 新增 / 大模块

@@ -15,7 +15,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-netstat -ano 2>nul | findstr "LISTENING" | findstr ":%PORT% " >nul 2>nul
+curl -sf -m 2 "%URL%api/health" 2>nul | findstr /C:"\"ready\"" >nul 2>nul
 if errorlevel 1 (
   echo [mindweave] 正在启动本地桥接后台 server.js（端口 %PORT%）...
   start "mindweave-bridge" /min cmd /c "cd /d "%DIR%" && set PORT=%PORT% && node server.js > "%LOG%" 2>&1"

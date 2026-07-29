@@ -28,7 +28,7 @@ if ! alive; then
   if [ -z "$ok" ]; then echo "[mindweave] 后台启动失败，日志：$LOG" >&2; cat "$LOG" 2>/dev/null >&2; exit 1; fi
 fi
 
-if [ -x "$DIR/思脉MindWeave.app/Contents/MacOS/applet" ] && [ "$(uname)" = "Darwin" ]; then
+if [ -x "$DIR/思脉MindWeave.app/Contents/MacOS/applet" ] && [ "$(uname)" = "Darwin" ] && [ -z "${MINDWEAVE_FROM_APP:-}" ]; then
   open "$DIR/思脉MindWeave.app"
 else
   case "$(uname -s)" in
