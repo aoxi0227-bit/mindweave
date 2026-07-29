@@ -8,7 +8,8 @@ const os = require("os");
 const ROOT = __dirname;
 const PORT = parseInt(process.env.PORT || "4317", 10);
 const SETTINGS = path.join(os.homedir(), ".claude", "settings.json");
-const SM = require("./skills-memory"); SM.ensure();
+const SK = require("./skills-memory"); SK.ensure();
+const DS = require("./data-store"); DS.ensure();
 
 function readCliConfig() {
   try {
@@ -369,7 +370,8 @@ async function handleChat(req, res) {
   const messages = Array.isArray(payload.messages) ? payload.messages : [];
   const noteId = payload.noteId || null;
   const baseSys = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
-  const system = SM.buildSystem(baseSys, noteId);
+  const dctx = payload.docContext || (noteId ? { noteId, title: payload.docTitle || "", group: payload.docGroup || "" } : null);
+  const system = DS.buildSystem(baseSys, dctx);
   const convo = messages.filter((m) => m.role !== "system");
   const h = await health(false);
   const reqBackend = (payload.backend || "").toString();
@@ -390,6 +392,8 @@ async function handleChat(req, res) {
   }
   await handleChatHttp(req, res, payload, system, backend.model || payload.model);
 }
+function collectTextHttp(baseUrl, key, model, messages) { return DS.collectHttp(baseUrl, key, model, messages); }
+async function getBackend() { const h = await health(false); const backs = await listBackends(h); const id = (require("./data-store").readCfg().backend) || ""; let b = backs.find((x) => x.id === id) || backs.find((x) => x.ready) || backs[0]; if (!b) return null; if (b.type === "http") { const env = readCliConfig(); return { type: "http", baseUrl: (env.ANTHROPIC_BASE_URL || "").replace(/\/+$/, ""), key: env.ANTHROPIC_API_KEY || "x", model: b.model }; } return { type: "cli", spec: b.spec }; }
 async function listBackends(h) {
   const out = [];
   if (h.proxyOk) out.push({ id: "claude-proxy", label: "本地代理 (cc-switch)", type: "http", ready: true, models: h.models, model: h.model });
@@ -429,29 +433,50 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, 200, { ok: true, clients }); return;
   }
   if (req.method === "GET" && url === "/api/system") {
-    const q = new URL(req.url, "http://x").searchParams; sendJson(res, 200, { system: SM.buildSystem(q.get("base") || "", q.get("noteId") || null) }); return;
+    const q = new URL(req.url, "http://x").searchParams; const _nid = q.get("noteId") || null; sendJson(res, 200, { system: DS.buildSystem(q.get("base") || "", _nid ? { noteId: _nid, title: q.get("title") || "", group: q.get("group") || "" } : null) }); return;
   }
   if (req.method === "GET" && url === "/api/backends") { sendJson(res, 200, { backends: await listBackends(await health(false)) }); return; }
-  if (req.method === "GET" && url === "/api/catalogs") { sendJson(res, 200, SM.catalogs()); return; }
+  if (req.method === "GET" && url === "/api/catalogs") { sendJson(res, 200, SK.catalogs()); return; }
   if (url === "/api/skills" || url === "/api/skills/") {
-    if (req.method === "GET") { const q = new URL(req.url, "http://x").searchParams; const d = q.get("detail"); if (d) { const sk = SM.getSkill(d); sendJson(res, 200, sk || { error: "not found" }); } else sendJson(res, 200, { skills: SM.listSkills().map((s) => ({ name: s.name, displayName: s.displayName, description: s.description, enabled: SM.skillEnabled(s.name), symlink: !!s.symlink, global: !!s.global })) }); return; }
-    if (req.method === "POST") { const b = JSON.parse(await readBody(req)); SM.createSkill(b.name, b.md || ""); sendJson(res, 200, { ok: true }); return; }
+    if (req.method === "GET") { const q = new URL(req.url, "http://x").searchParams; const d = q.get("detail"); if (d) { const sk = SK.getSkill(d); sendJson(res, 200, sk || { error: "not found" }); } else sendJson(res, 200, { skills: SK.listSkills().map((s) => ({ name: s.name, displayName: s.displayName, description: s.description, enabled: SK.skillEnabled(s.name), symlink: !!s.symlink, global: !!s.global })) }); return; }
+    if (req.method === "POST") { const b = JSON.parse(await readBody(req)); SK.createSkill(b.name, b.md || ""); sendJson(res, 200, { ok: true }); return; }
   }
   if (req.method === "POST" && url === "/api/skills/install") {
-    try { const b = JSON.parse(await readBody(req)); const u = new URL(b.url); const r = await httpJson(b.url, { headers: { "User-Agent": "mindweave" } }, 15000); if (r.status !== 200) throw new Error("HTTP " + r.status); SM.createSkill(b.name, r.body); sendJson(res, 200, { ok: true }); }
+    try { const b = JSON.parse(await readBody(req)); const u = new URL(b.url); const r = await httpJson(b.url, { headers: { "User-Agent": "mindweave" } }, 15000); if (r.status !== 200) throw new Error("HTTP " + r.status); SK.createSkill(b.name, r.body); sendJson(res, 200, { ok: true }); }
     catch (e) { sendJson(res, 500, { error: e.message }); } return;
   }
   if (req.method === "POST" && url === "/api/skills/link") {
-    try { const b = JSON.parse(await readBody(req)); SM.linkSkill(b.name, b.target); sendJson(res, 200, { ok: true }); } catch (e) { sendJson(res, 500, { error: e.message }); } return;
+    try { const b = JSON.parse(await readBody(req)); SK.linkSkill(b.name, b.target); sendJson(res, 200, { ok: true }); } catch (e) { sendJson(res, 500, { error: e.message }); } return;
   }
   const mS = url.match(/^\/api\/skills\/([^/]+)\/enabled\/?$/);
-  if (mS && req.method === "POST") { const b = JSON.parse(await readBody(req)); SM.setSkillEnabled(decodeURIComponent(mS[1]), !!b.enabled); sendJson(res, 200, { ok: true }); return; }
+  if (mS && req.method === "POST") { const b = JSON.parse(await readBody(req)); SK.setSkillEnabled(decodeURIComponent(mS[1]), !!b.enabled); sendJson(res, 200, { ok: true }); return; }
   const mD = url.match(/^\/api\/skills\/([^/]+)\/?$/);
-  if (mD && req.method === "DELETE") { SM.deleteSkill(decodeURIComponent(mD[1])); sendJson(res, 200, { ok: true }); return; }
+  if (mD && req.method === "DELETE") { SK.deleteSkill(decodeURIComponent(mD[1])); sendJson(res, 200, { ok: true }); return; }
   if (url === "/api/memory" || url === "/api/memory/") {
-    const q = new URL(req.url, "http://x").searchParams; const scope = q.get("scope") || SM.readCfg().memoryScope || "global"; const noteId = q.get("noteId") || null;
-    if (req.method === "GET") { sendJson(res, 200, { scope, entries: SM.combinedMem(noteId) }); return; }
-    if (req.method === "POST") { const b = JSON.parse(await readBody(req)); SM.writeMem(b.scope || scope, b.noteId || noteId, b.text || ""); sendJson(res, 200, { ok: true }); return; }
+    const q = new URL(req.url, "http://x").searchParams; const scope = q.get("scope") || SK.readCfg().memoryScope || "global"; const noteId = q.get("noteId") || null;
+    if (req.method === "GET") { sendJson(res, 200, { scope, entries: { note: DS.readNoteMem(noteId || "") } }); return; }
+    if (req.method === "POST") { const b = JSON.parse(await readBody(req)); DS.writeNoteMem(b.noteId || noteId || "", b.text || ""); sendJson(res, 200, { ok: true }); return; }
+  }
+  if (req.method === "GET" && url === "/api/data") { sendJson(res, 200, DS.loadData()); return; }
+  if (req.method === "POST" && url === "/api/data/sync") { try { const b = JSON.parse(await readBody(req)); sendJson(res, 200, DS.syncData(b)); } catch (e) { sendJson(res, 500, { error: e.message }); } return; }
+  if (req.method === "GET" && url === "/api/data/reveal") { const q = new URL(req.url, "http://x").searchParams; sendJson(res, 200, { path: DS.revealDir(q.get("p") || null) }); return; }
+  if (req.method === "POST" && url === "/api/memory/update") {
+    try {
+      const b = JSON.parse(await readBody(req)); const noteId = b.noteId, group = b.group || "未分组", title = b.title || "", md = b.markdown || "";
+      const be = await getBackend(); if (!be) { sendJson(res, 500, { error: "无可用后端，无法总结 memory" }); return; }
+      const sys = "你是记忆整理助手。根据给定的思维导图文档，产出该笔记的精炼记忆，严格两行格式：第一行以「摘要: 」开头(<=60字概括本篇)；第二行以「记忆: 」开头(3-6个要点，用「；」分隔，含结构/关键结论/待定问题)。只输出这两行，不要多余内容。";
+      const prompt = "笔记标题: " + title + "\n所属分组: " + group + "\n\n文档:\n" + md;
+      let txt = "";
+      if (be.type === "http") txt = await collectTextHttp(be.baseUrl, be.key, be.model, [{ role: "user", content: sys + "\n\n" + prompt }]);
+      else txt = await DS.collectCli(be.spec, prompt, sys);
+      const sumM = (txt || "").match(/摘要[:：]\s*(.+)/); const memM = (txt || "").match(/记忆[:：]\s*(.+)/);
+      const oneline = sumM ? sumM[1].trim() : (title + " 的记忆");
+      const noteMem = "## 《" + title + "》\n- " + (memM ? memM[1].trim() : oneline) + "\n";
+      DS.writeNoteMem(noteId, noteMem);
+      if (group && group !== "未分组") DS.setGroupIndexLine(group, noteId, title, oneline);
+      sendJson(res, 200, { ok: true, oneline });
+    } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
   }
   if (req.method === "GET") {
     serveStatic(req, res);

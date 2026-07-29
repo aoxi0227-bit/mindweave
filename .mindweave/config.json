@@ -1,7 +1,8 @@
 {
-  "memoryScope": "global",
+  "memoryScope": "note",
   "registries": [
     "https://github.com/anthropics/skills"
   ],
-  "disabledSkills": []
+  "disabledSkills": [],
+  "backend": "qwen"
 }
