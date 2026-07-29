@@ -580,7 +580,7 @@ for(const n of layoutNodes){
 let m=gEls.get(n.id);
 const spawn=!m;
 if(!m){
-const g=svgEl("g",{class:"node"},gN);
+const g=svgEl("g",{class:"node","data-id":n.id},gN);
 const inner=svgEl("g",{class:"inner"},g);
 m={g,inner,rect:null,text:null,dot:null,badge:null};
 g.addEventListener("click",e=>{e.stopPropagation();selectNode(n.id)});
@@ -625,11 +625,12 @@ if(!userZoomed)applyFit();else applyTransform();
 }
 function paint(P){
 for(const [id,m] of gEls){const p=P.get(id);if(p)m.g.setAttribute("transform","translate("+p.x+","+p.y+")")}
+window.__v=view;window.__pm=P;
 for(const l of linkEls){const pp=P.get(l.pid),cp=P.get(l.cid);if(!pp||!cp)continue;const pn=gEls.get(l.pid).meta,cn=gEls.get(l.cid).meta;
 const x1=pp.x+pn.w,y1=pp.y+pn.h/2,x2=cp.x,y2=cp.y+cn.h/2,dx=Math.max(24,(x2-x1)*.5);
 l.path.setAttribute("d","M "+x1+" "+y1+" C "+(x1+dx)+" "+y1+", "+(x2-dx)+" "+y2+", "+(x2-3)+" "+y2)}
 }
-function afterRender(){placeToolbar();updateMdStats()}
+function afterRender(){if(selectedId&&gEls.has(selectedId)){gEls.forEach(m=>m.g.classList.remove("sel"));gEls.get(selectedId).g.classList.add("sel")}placeToolbar();updateMdStats()}
 function applyTransform(){
 $("#gViewport").setAttribute("transform","translate("+view.tx+","+view.ty+") scale("+view.s+")");
 $("#zoomPct").textContent=Math.round(view.s*100)+"%";
@@ -650,6 +651,7 @@ svg.addEventListener("wheel",e=>{e.preventDefault();const r=wrapEl.getBoundingCl
 const ns=clamp(view.s*Math.exp(-e.deltaY*.0016),fitScale,4);
 view.tx=mx-(mx-view.tx)*(ns/view.s);view.ty=my-(my-view.ty)*(ns/view.s);view.s=ns;userZoomed=ns>fitScale+.001;applyTransform()},{passive:false});
 svg.addEventListener("click",e=>{if(!e.target.closest(".node")){selectNode(null)}});
+let _ct=0;function centerOnNode(id){clearTimeout(_ct);_ct=setTimeout(()=>{const g=document.querySelector('#gNodes .node[data-id="'+id+'"]')||document.querySelector("#gNodes .node.sel");if(!g)return;const r=g.getBoundingClientRect(),wrap=$("#canvasWrap");const dx=wrap.clientWidth/2-(r.left+r.width/2),dy=wrap.clientHeight/2-(r.top+r.height/2);if(Math.abs(dx)<2&&Math.abs(dy)<2)return;const tx0=view.tx,ty0=view.ty,t0=performance.now();(function step(now){const k=Math.min((now-t0)/320,1),e=1-Math.pow(1-k,3);view.tx=tx0+dx*e;view.ty=ty0+dy*e;userZoomed=true;applyTransform();if(k<1)requestAnimationFrame(step)})(t0)},460)}
 function zoomBy(f){const r=wrapEl.getBoundingClientRect();const mx=r.width/2,my=r.height/2;const ns=clamp(view.s*f,fitScale,4);view.tx=mx-(mx-view.tx)*(ns/view.s);view.ty=my-(my-view.ty)*(ns/view.s);view.s=ns;userZoomed=ns>fitScale+.001;applyTransform()}
 $("#zoomInBtn").onclick=()=>zoomBy(1.25);
 $("#zoomOutBtn").onclick=()=>zoomBy(.8);
@@ -679,9 +681,9 @@ $("#ntSib").onclick=()=>addSibling(selectedId);
 $("#ntDel").onclick=()=>deleteNode(selectedId);
 $("#ntToggle").onclick=()=>toggleCollapse(selectedId);
 
-function addChild(pid,title){pushUndo();const p=findNode(pid);if(!p)return;collapsedNodes.delete(pid);const n={id:p.id+"."+p.children.length,title:title||"新主题",children:[],depth:p.depth+1,_idx:p.children.length};p.children.push(n);commitTree(true);selectNode(n.id);recordCreate(n.id);if(!title)startNodeEdit(n.id)}
-function addSibling(id,title){pushUndo();if(id==="r"){addChild("r",title);return}const p=findParent(id);if(!p)return;const i=p.children.findIndex(c=>c.id===id);const n={id:"",title:title||"新主题",children:[],depth:p.children[0].depth};p.children.splice(i+1,0,n);assignIds(tree);commitTree(true);const nid=p.children[i+1].id;selectNode(nid);recordCreate(nid);if(!title)startNodeEdit(nid)}
-function deleteNode(id,opts){opts=opts||{};if(id==="r"){toast("中心主题不能删除");return}const p=findParent(id);if(!p)return;pushUndo();p.children=p.children.filter(c=>c.id!==id);assignIds(tree);let ci=createHist.indexOf(id);if(ci>=0)createHist.splice(ci,1);let cascadeTarget=null;if(opts.cascade&&createHist.length&&ci===createHist.length){const prev=createHist[createHist.length-1];if(findNode(prev))cascadeTarget=prev}commitTree(true);selectNode(cascadeTarget)}
+function addChild(pid,title){pushUndo();const p=findNode(pid);if(!p)return;collapsedNodes.delete(pid);const n={id:p.id+"."+p.children.length,title:title||"新主题",children:[],depth:p.depth+1,_idx:p.children.length};p.children.push(n);commitTree(true);selectNode(n.id);recordCreate(n.id);centerOnNode(n.id);if(!title)startNodeEdit(n.id)}
+function addSibling(id,title){pushUndo();if(id==="r"){addChild("r",title);return}const p=findParent(id);if(!p)return;const i=p.children.findIndex(c=>c.id===id);const n={id:"",title:title||"新主题",children:[],depth:p.children[0].depth};p.children.splice(i+1,0,n);assignIds(tree);commitTree(true);const nid=p.children[i+1].id;selectNode(nid);recordCreate(nid);centerOnNode(nid);if(!title)startNodeEdit(nid)}
+function deleteNode(id,opts){opts=opts||{};if(id==="r"){toast("中心主题不能删除");return}const p=findParent(id);if(!p)return;let nxt=null;const si=p.children.findIndex(c=>c.id===id);if(p.id==="r")nxt=si>0?p.children[si-1].id:"r";else nxt=si>0?p.children[si-1].id:p.id;pushUndo();p.children=p.children.filter(c=>c.id!==id);assignIds(tree);const ci=createHist.indexOf(id);if(ci>=0)createHist.splice(ci,1);commitTree(true);selectNode(nxt)}
 function toggleCollapse(id){pushUndo();if(id==="r"&&!tree.children.length)return;if(collapsedNodes.has(id))collapsedNodes.delete(id);else collapsedNodes.add(id);renderMap(true)}
 
 const nodeEditor=$("#nodeEditorInput");let editingId=null;
@@ -696,8 +698,8 @@ nodeEditor.value=n.title;nodeEditor.focus();nodeEditor.select();
 }
 nodeEditor.addEventListener("keydown",e=>{e.stopPropagation();if(e.key==="Enter"){commitEdit()}else if(e.key==="Escape"){cancelEdit()}});
 nodeEditor.addEventListener("blur",commitEdit);
-function commitEdit(){if(!editingId)return;const n=findNode(editingId);const v=nodeEditor.value.trim();nodeEditor.style.display="none";if(n&&v&&v!==n.title){pushUndo();n.title=v;commitTree(false)}editingId=null}
-function cancelEdit(){nodeEditor.style.display="none";editingId=null}
+function commitEdit(){if(!editingId)return;const eid=editingId;const n=findNode(eid);const v=nodeEditor.value.trim();nodeEditor.style.display="none";try{nodeEditor.blur()}catch(e){}if(document.activeElement&&document.activeElement!==document.body)try{document.body.setAttribute("tabindex","-1");document.body.focus()}catch(e){}if(n&&v&&v!==n.title){pushUndo();n.title=v;commitTree(false)}if(selectedId===eid)selectNode(eid);editingId=null}
+function cancelEdit(){nodeEditor.style.display="none";try{nodeEditor.blur()}catch(e){}editingId=null}
 
 let orderList=[];
 let undoStack=[],redoStack=[],createHist=[];
@@ -711,6 +713,7 @@ if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="k"){e.preventDefault();if(stat
 if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="s"){e.preventDefault();persist();setSaved();toast("已保存到本地");return}
 if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="z"){e.preventDefault();if(e.shiftKey)doUndo(true);else doUndo(false);return}
 if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="y"){e.preventDefault();doUndo(true);return}
+if(!selectedId||!gEls.has(selectedId)){const sg=document.querySelector("#gNodes .node.sel");if(sg){const rid=sg.getAttribute("data-id");if(rid&&gEls.has(rid))selectedId=rid}}
 if(!selectedId||!gEls.has(selectedId))return;
 orderList=[];(function w(n){orderList.push(n.id);(n.visChildren||[]).forEach(w)})(tree);
 const i=orderList.indexOf(selectedId),n=findNode(selectedId);
