@@ -82,6 +82,12 @@ svg{display:block}
 .group-actions{display:flex;gap:2px;opacity:0;transition:opacity var(--t)}
 .group-head:hover .group-actions{opacity:1}
 .group-actions .ibtn.armed{background:var(--err);color:#fff;width:auto!important;padding:0 7px;font-size:10.5px;font-weight:600}
+.grp-add{color:var(--clay)!important}
+.doc-item[draggable="true"]{cursor:grab}
+.doc-item.dragging{opacity:.35}
+.group.drag-over>.group-head,.group-docs.drag-over{outline:2px dashed var(--clay);outline-offset:-2px;border-radius:9px}
+.doc-item.drop-before{box-shadow:inset 0 2px 0 0 var(--clay)}
+.doc-item.drop-after{box-shadow:inset 0 -2px 0 0 var(--clay)}
 .group.collapsed .group-docs{display:none}
 .doc-item{display:flex;align-items:center;gap:8px;padding:7px 8px 7px 22px;border-radius:9px;cursor:pointer;position:relative;transition:background var(--t)}
 .doc-item:hover{background:var(--sand)}
@@ -747,16 +753,19 @@ function updateMdStats(){const v=mdEditor.value;$("#mdStats").textContent=v.repl
 $("#hintClose").innerHTML=icon("x","icon sm");
 $("#hintClose").onclick=()=>{$("#hintPill").style.display="none";state.ui.hintSeen=true;persist()};
 
+function createBlankDoc(group){const d={id:uid(),title:"未命名导图",markdown:"# 未命名导图\n",group:group||"未分组",template:"blank",order:Date.now(),createdAt:Date.now(),updatedAt:Date.now(),chat:[{role:"assistant",text:"空白导图已创建。直接说，或编辑右侧 Markdown，我陪你梳理。"}]};if(!state.groups.find(g=>g.name===(group||"未分组")))state.groups.push({name:group||"未分组"});state.docs.push(d);state.activeId=d.id;persist();renderDocList();loadDocToView()}
+function moveDoc(id,group,beforeId,append){const d=state.docs.find(x=>x.id===id);if(!d)return;d.group=group;let siblings=state.docs.filter(x=>x.group===group&&x.id!==id).sort((a,b)=>((a.order||0)-(b.order||0))||(b.updatedAt-a.updatedAt));if(beforeId){const i=siblings.findIndex(x=>x.id===beforeId);if(i>=0)siblings.splice(i,0,d);else siblings.push(d)}else if(append)siblings.push(d);else siblings.unshift(d);siblings.forEach((x,i)=>x.order=i);d.updatedAt=Date.now();persist();renderDocList();if(state.activeId===id){syncTitle();markDirty()}}
 function renderDocList(){
 const q=$("#searchInput").value.trim().toLowerCase();
 const box=$("#docList");box.innerHTML="";
 state.groups.forEach(g=>{
-const docs=state.docs.filter(d=>d.group===g.name).sort((a,b)=>b.updatedAt-a.updatedAt).filter(d=>!q||d.title.toLowerCase().includes(q));
+const docs=state.docs.filter(d=>d.group===g.name).sort((a,b)=>((a.order||0)-(b.order||0))||(b.updatedAt-a.updatedAt)).filter(d=>!q||d.title.toLowerCase().includes(q));
 if(q&&!docs.length)return;
 const gDiv=document.createElement("div");gDiv.className="group"+(state.ui.collapsedGroups[g.name]?" collapsed":"");
 const head=document.createElement("div");head.className="group-head";
-head.innerHTML='<svg class="icon sm chev" viewBox="0 0 24 24">'+IC.chev+'</svg><span class="group-name" title="双击也可重命名">'+esc(g.name)+'</span><span class="group-count">'+docs.length+'</span><span class="group-actions"><button class="ibtn grp-ren" title="重命名分组" style="width:22px;height:22px">'+icon("pen","icon sm")+'</button>'+(g.name==="未分组"?'':'<button class="ibtn danger grp-del" title="删除分组" style="width:22px;height:22px">'+icon("trash","icon sm")+"</button>")+"</span>";
+head.innerHTML='<svg class="icon sm chev" viewBox="0 0 24 24">'+IC.chev+'</svg><span class="group-name" title="双击也可重命名">'+esc(g.name)+'</span><span class="group-count">'+docs.length+'</span><span class="group-actions"><button class="ibtn grp-add" title="在此组新建空白导图" style="width:22px;height:22px">'+icon("plus","icon sm")+'</button><button class="ibtn grp-ren" title="重命名分组" style="width:22px;height:22px">'+icon("pen","icon sm")+'</button>'+(g.name==="未分组"?'':'<button class="ibtn danger grp-del" title="删除分组" style="width:22px;height:22px">'+icon("trash","icon sm")+"</button>")+"</span>";
 const nameEl=head.querySelector(".group-name");
+const addBtn=head.querySelector(".grp-add");if(addBtn)addBtn.onclick=e=>{e.stopPropagation();createBlankDoc(g.name)};
 const startRename=()=>{if(head.querySelector(".inline-input"))return;const inp=document.createElement("input");inp.className="inline-input";inp.value=g.name;nameEl.replaceWith(inp);inp.focus();inp.select();
 const done=ok=>{const v=inp.value.trim();if(ok&&v&&v!==g.name){if(state.groups.some(x=>x.name===v)){toast("已存在同名分组");renderDocList();return}state.docs.forEach(d=>{if(d.group===g.name)d.group=v});g.name=v;persist()}renderDocList()};
 inp.addEventListener("keydown",ev=>{if(ev.key==="Enter")done(true);if(ev.key==="Escape")done(false)});inp.addEventListener("blur",()=>done(true))};
@@ -770,8 +779,9 @@ gDiv.appendChild(head);
 const list=document.createElement("div");list.className="group-docs";
 docs.forEach(d=>{
 const it=document.createElement("div");it.className="doc-item"+(d.id===state.activeId?" active":"");
-it.innerHTML='<span class="doc-title">'+esc(d.title)+'</span><span class="doc-meta">'+fmtAgo(d.updatedAt)+'</span><span class="doc-actions"><button class="ibtn" title="重命名" style="width:22px;height:22px">'+icon("pen","icon sm")+'</button><button class="ibtn danger" title="删除" style="width:22px;height:22px">'+icon("trash","icon sm")+"</button></span>";
+it.setAttribute("data-id",d.id);it.innerHTML='<span class="doc-title">'+esc(d.title)+'</span><span class="doc-meta">'+fmtAgo(d.updatedAt)+'</span><span class="doc-actions"><button class="ibtn" title="重命名" style="width:22px;height:22px">'+icon("pen","icon sm")+'</button><button class="ibtn danger" title="删除" style="width:22px;height:22px">'+icon("trash","icon sm")+"</button></span>";
 it.onclick=()=>openDoc(d.id);
+it.draggable=true;it.addEventListener("dragstart",e=>{e.dataTransfer.setData("text/plain",d.id);e.dataTransfer.effectAllowed="move";it.classList.add("dragging")});it.addEventListener("dragend",()=>it.classList.remove("dragging"));it.addEventListener("dragover",e=>{e.preventDefault();e.stopPropagation();e.dataTransfer.dropEffect="move";const r=it.getBoundingClientRect();const after=(e.clientY-r.top)>r.height/2;it.classList.toggle("drop-after",after);it.classList.toggle("drop-before",!after)});it.addEventListener("dragleave",()=>it.classList.remove("drop-before","drop-after"));it.addEventListener("drop",e=>{e.preventDefault();e.stopPropagation();it.classList.remove("drop-before","drop-after");const id=e.dataTransfer.getData("text/plain");if(!id)return;const r=it.getBoundingClientRect();const after=(e.clientY-r.top)>r.height/2;moveDoc(id,g.name,after?d.id:null,after)});
 const [ren,del]=it.querySelectorAll(".doc-actions .ibtn");
 ren.onclick=e=>{e.stopPropagation();const t=it.querySelector(".doc-title");const inp=document.createElement("input");inp.className="inline-input";inp.value=d.title;t.replaceWith(inp);inp.focus();inp.select();
 const done=ok=>{const v=inp.value.trim();if(ok&&v)d.title=v;persist();syncTitle();renderDocList()};
@@ -779,7 +789,7 @@ inp.addEventListener("keydown",ev=>{if(ev.key==="Enter")done(true);if(ev.key==="
 del.onclick=e=>{e.stopPropagation();if(del.classList.contains("armed")){removeDoc(d.id)}else{del.classList.add("armed");del.textContent="确认？";setTimeout(()=>{del.classList.remove("armed");del.innerHTML=icon("trash","icon sm")},2200)}};
 list.appendChild(it);
 });
-gDiv.appendChild(list);box.appendChild(gDiv);
+list.addEventListener("dragover",e=>{e.preventDefault();e.dataTransfer.dropEffect="move";list.classList.add("drag-over")});list.addEventListener("dragleave",e=>{if(!list.contains(e.relatedTarget))list.classList.remove("drag-over")});list.addEventListener("drop",e=>{e.preventDefault();list.classList.remove("drag-over");const id=e.dataTransfer.getData("text/plain");if(!id)return;const els=[...list.querySelectorAll(".doc-item")];let beforeId=null,after=false;for(const el of els){if(el.classList.contains("dragging"))continue;const r=el.getBoundingClientRect();if(e.clientY<r.top+r.height/2){beforeId=el.getAttribute("data-id")||state.docs.find(x=>x.title===el.querySelector(".doc-title").textContent&&x.group===g.name)?.id;break}}moveDoc(id,g.name,beforeId,false)});gDiv.addEventListener("dragover",e=>{e.preventDefault();e.dataTransfer.dropEffect="move";gDiv.classList.add("drag-over")});gDiv.addEventListener("dragleave",e=>{if(!gDiv.contains(e.relatedTarget))gDiv.classList.remove("drag-over")});gDiv.addEventListener("drop",e=>{if(e.target.closest(".doc-item")||e.target.closest(".group-docs"))return;e.preventDefault();gDiv.classList.remove("drag-over");const id=e.dataTransfer.getData("text/plain");if(id)moveDoc(id,g.name,null,true)});gDiv.appendChild(list);box.appendChild(gDiv);
 });
 }
 $("#searchInput").addEventListener("input",renderDocList);
@@ -803,8 +813,8 @@ if(tpl==="brainstorm")return"我们先发散，再收敛。把脑子里的念头
 if(tpl==="reading")return"把书名告诉我，我们一起按章节拆脉络、摘金句，最后沉淀「我的思考」。";
 return"从中心主题开始，想到什么说什么——讨论够了，我就帮你沉淀成导图。"}
 
-$("#newDocBtn").innerHTML=icon("plus","icon sm")+"新建文档";
-$("#newDocBtn").onclick=()=>openModal("tplModal");
+$("#newDocBtn").innerHTML=icon("doc","icon sm")+"新建文档";
+$("#newDocBtn").onclick=()=>createBlankDoc("未分组");
 $("#importBtn").innerHTML=icon("up","icon sm")+"导入";
 $("#importBtn").onclick=()=>$("#fileInput").click();
 $("#fileInput").addEventListener("change",e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{const d={id:uid(),title:f.name.replace(/\.(md|markdown|txt)$/i,""),markdown:String(r.result),group:"未分组",template:"blank",createdAt:Date.now(),updatedAt:Date.now(),chat:[{role:"assistant",text:"已导入「"+f.name+"」，导图已生成。想调整结构，直接说。"}]};state.docs.unshift(d);state.activeId=d.id;persist();renderDocList();loadDocToView();toast("导入成功")};r.readAsText(f);e.target.value=""});
