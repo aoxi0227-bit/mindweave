@@ -9,9 +9,11 @@ $running=$false
 try{$h=Invoke-WebRequest -Uri "$($URL)api/health" -UseBasicParsing -TimeoutSec 2;if($h.Content -match '"ready"'){$running=$true}}catch{}
 if(-not $running){
   Write-Host "[mindweave] starting bridge on port $($env:PORT) ..."
-  # -WindowStyle 与 -RedirectStandardOutput 不能同时使用；改由 cmd /c 内部重定向
-  $cmdArgs = '/c "node server.js 1>"' + $LOG + '" 2>&1"'
-  Start-Process -FilePath 'cmd.exe' -ArgumentList $cmdArgs -WorkingDirectory $DIR -WindowStyle Hidden | Out-Null
+  # Write a tiny runner .cmd (ANSI encoding, readable by cmd) to avoid Start-Process quoting/redirect conflicts.
+  $runner = Join-Path $env:TEMP ("mindweave-run-" + $env:PORT + ".cmd")
+  $lines = '@cd /d "' + $DIR + '"', '@node server.js 1>>"' + $LOG + '" 2>&1'
+  Set-Content -Path $runner -Value $lines -Encoding Default
+  Start-Process -FilePath $runner -WindowStyle Hidden
   $ok=$false
   for($i=0;$i -lt 40;$i++){try{Invoke-WebRequest -Uri "$($URL)api/health" -UseBasicParsing -TimeoutSec 2|Out-Null;$ok=$true;break}catch{Start-Sleep -Milliseconds 250}}
   if(-not $ok){Write-Host "[mindweave] bridge failed. Log: $LOG" -ForegroundColor Red;Get-Content $LOG -ErrorAction SilentlyContinue;Read-Host 'Press Enter';exit 1}

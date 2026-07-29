@@ -2,6 +2,12 @@
 
 本项目采用语义化版本：**大模块/功能更新 → `v1.x`（如 v1.1）**；**小调整/修复 → `v1.x.y`（如 v1.0.1）**。
 
+## [v1.1.3] — start.bat 纯 ASCII + CRLF，启动链路去嵌套引号
+
+- **start.bat 在 Windows 上跑不起来**：批处理对编码与换行极敏感——UTF-8 中文文案在 GBK 控制台解析出错、LF 换行破坏 `goto :ready` 标签解析。改为**纯 ASCII（英文文案）+ CRLF**；不再需要 `chcp 65001`。
+- **启动命令去嵌套引号**：`start /min cmd /c "cd /d "%DIR%" && node ... > "%LOG%""` 的多层引号在 cmd 下解析不可靠。改为先生成临时 runner 脚本 `%TEMP%\mindweave-run-%PORT%.cmd`（`@cd /d ...` + `@node server.js >>log 2>&1`），再 `start /min` 运行——零嵌套引号，路径含空格/中文都安全。
+- **start.ps1 同步**：同样改为生成 runner .cmd（`-Encoding Default` 写入，cmd 按系统 ANSI 读取，中文路径安全），消除 `Start-Process` 引号/重定向冲突的另一处隐患。
+
 ## [v1.1.2] — Windows 兼容性修复
 
 - **Windows 检测不到任何 CLI**：npm 全局 CLI 在 Windows 是 `claude.cmd` / `kimi.cmd` 等 shim，`findBin` 只按裸名查找永远找不到，且 `spawn` 直接调 .cmd 会 ENOENT。现 `findBin` 在 win32 自动追加 `.cmd/.exe/.bat/.ps1` 后缀探测（含 `%APPDATA%\npm` 候选目录），`.cmd/.bat` 经 cmd shell 启动（`server.js` 与 `data-store.js` 的 collectCli 同步修复）。
