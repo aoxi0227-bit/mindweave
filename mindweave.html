@@ -645,13 +645,13 @@ const renderDocListSoon=debounce(renderDocList,800);
 const svg=$("#mapSvg"),wrapEl=$("#canvasWrap");
 let pan=null;
 svg.addEventListener("pointerdown",e=>{if(e.target.closest(".node")||e.target.closest(".collapse-badge"))return;pan={x:e.clientX,y:e.clientY,tx:view.tx,ty:view.ty};svg.classList.add("panning");svg.setPointerCapture(e.pointerId)});
-svg.addEventListener("pointermove",e=>{if(!pan)return;view.tx=pan.tx+e.clientX-pan.x;view.ty=pan.ty+e.clientY-pan.y;userZoomed=true;applyTransform()});
+svg.addEventListener("pointermove",e=>{if(!pan)return;view.tx=pan.tx+e.clientX-pan.x;view.ty=pan.ty+e.clientY-pan.y;userZoomed=true;_userPan=true;applyTransform()});
 svg.addEventListener("pointerup",()=>{pan=null;svg.classList.remove("panning")});
 svg.addEventListener("wheel",e=>{e.preventDefault();const r=wrapEl.getBoundingClientRect();const mx=e.clientX-r.left,my=e.clientY-r.top;
 const ns=clamp(view.s*Math.exp(-e.deltaY*.0016),fitScale,4);
-view.tx=mx-(mx-view.tx)*(ns/view.s);view.ty=my-(my-view.ty)*(ns/view.s);view.s=ns;userZoomed=ns>fitScale+.001;applyTransform()},{passive:false});
+view.tx=mx-(mx-view.tx)*(ns/view.s);view.ty=my-(my-view.ty)*(ns/view.s);view.s=ns;userZoomed=ns>fitScale+.001;_userPan=true;applyTransform()},{passive:false});
 svg.addEventListener("click",e=>{if(!e.target.closest(".node")){selectNode(null)}});
-let _ct=0;function centerOnNode(id){clearTimeout(_ct);_ct=setTimeout(()=>{const g=document.querySelector('#gNodes .node[data-id="'+id+'"]')||document.querySelector("#gNodes .node.sel");if(!g)return;const r=g.getBoundingClientRect(),wrap=$("#canvasWrap");const dx=wrap.clientWidth/2-(r.left+r.width/2),dy=wrap.clientHeight/2-(r.top+r.height/2);if(Math.abs(dx)<2&&Math.abs(dy)<2)return;const tx0=view.tx,ty0=view.ty,t0=performance.now();(function step(now){const k=Math.min((now-t0)/320,1),e=1-Math.pow(1-k,3);view.tx=tx0+dx*e;view.ty=ty0+dy*e;userZoomed=true;applyTransform();if(k<1)requestAnimationFrame(step)})(t0)},460)}
+let _ct=0,_userPan=false;function centerOnNode(id){clearTimeout(_ct);cancelAnimationFrame(animRAF);animRAF=0;posMap=new Map(layoutNodes.map(n=>[n.id,{x:n.bx,y:n.by}]));paint(posMap);_userPan=false;const wrap=$("#canvasWrap");const apply=()=>{const n=findNode(id);if(!n)return true;const s=view.s;const ntx=wrap.clientWidth/2-(n.bx+n.w/2)*s,nty=wrap.clientHeight/2-(n.by+n.h/2)*s;if(Math.abs(ntx-view.tx)<1&&Math.abs(nty-view.ty)<1)return true;view.tx=ntx;view.ty=nty;userZoomed=true;applyTransform();return false};const tween=()=>{const n=findNode(id);if(!n)return;const s=view.s;const tx=wrap.clientWidth/2-(n.bx+n.w/2)*s,ty=wrap.clientHeight/2-(n.by+n.h/2)*s;const s0=view.s,tx0=view.tx,ty0=view.ty,t0=performance.now();(function step(now){const k=Math.min((now-t0)/340,1),e=1-Math.pow(1-k,3);view.tx=tx0+(tx-tx0)*e;view.ty=ty0+(ty-ty0)*e;view.s=s0+(s-s0)*e;userZoomed=true;applyTransform();if(k<1)requestAnimationFrame(step)})(t0)};tween();_ct=setTimeout(()=>{apply();setTimeout(apply,400);setTimeout(apply,900)},1300)}
 function zoomBy(f){const r=wrapEl.getBoundingClientRect();const mx=r.width/2,my=r.height/2;const ns=clamp(view.s*f,fitScale,4);view.tx=mx-(mx-view.tx)*(ns/view.s);view.ty=my-(my-view.ty)*(ns/view.s);view.s=ns;userZoomed=ns>fitScale+.001;applyTransform()}
 $("#zoomInBtn").onclick=()=>zoomBy(1.25);
 $("#zoomOutBtn").onclick=()=>zoomBy(.8);
