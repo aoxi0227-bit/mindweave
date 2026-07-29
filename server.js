@@ -2,7 +2,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const os = require("os");
 
 const ROOT = __dirname;
@@ -419,6 +419,91 @@ async function listBackends(h) {
   for (const c of clis) out.push({ id: c.id, label: c.label + " CLI", type: "cli", ready: true, version: c.version, spec: Object.assign({}, CLI_SPECS.find((s) => s.id === c.id), { bin: c.bin }) });
   return out;
 }
+
+// ---- hot update (GitHub Releases) ----
+const UPDATE_REPO = "aoxi0227-bit/mindweave";
+let updCache = { t: 0, val: null };
+function semverCmp(a, b) {
+  const pa = String(a).replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) { const x = pa[i] || 0, y = pb[i] || 0; if (x !== y) return x < y ? -1 : 1; }
+  return 0;
+}
+function httpsRequest(u, n, onRes, reject, timeoutMs) {
+  const mod = u.startsWith("https:") ? require("https") : http;
+  const req = mod.get(u, { headers: { "User-Agent": "mindweave-updater", Accept: "application/vnd.github+json" } }, (res) => {
+    if ([301, 302, 303, 307, 308].indexOf(res.statusCode) >= 0 && n > 0 && res.headers.location) {
+      res.resume();
+      httpsRequest(new URL(res.headers.location, u).toString(), n - 1, onRes, reject, timeoutMs);
+      return;
+    }
+    onRes(res);
+  });
+  req.on("error", reject);
+  req.setTimeout(timeoutMs || 10000, () => req.destroy(new Error("timeout")));
+}
+function httpsGetJson(url, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    httpsRequest(url, 5, (res) => {
+      let b = "";
+      res.on("data", (d) => (b += d));
+      res.on("end", () => {
+        if (res.statusCode !== 200) return reject(new Error("HTTP " + res.statusCode));
+        try { resolve(JSON.parse(b)); } catch (e) { reject(e); }
+      });
+    }, reject, timeoutMs);
+  });
+}
+function httpsDownload(url, dest, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    httpsRequest(url, 5, (res) => {
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error("HTTP " + res.statusCode)); }
+      const ws = fs.createWriteStream(dest);
+      res.pipe(ws);
+      ws.on("finish", () => ws.close(() => resolve(dest)));
+      ws.on("error", reject);
+    }, reject, timeoutMs || 120000);
+  });
+}
+async function updateCheck(force) {
+  if (!force && updCache.val && Date.now() - updCache.t < 600000) return updCache.val;
+  let val;
+  try {
+    const j = await httpsGetJson("https://api.github.com/repos/" + UPDATE_REPO + "/releases/latest", 8000);
+    const latest = String(j.tag_name || "").replace(/^v/, "");
+    val = { current: APP_VERSION, latest, update: !!latest && semverCmp(APP_VERSION, latest) < 0, url: j.html_url || "", notes: String(j.body || "").slice(0, 600) };
+  } catch (e) { val = { current: APP_VERSION, latest: "", update: false, error: e.message }; }
+  updCache = { t: Date.now(), val };
+  return val;
+}
+async function updateApply() {
+  const j = await httpsGetJson("https://api.github.com/repos/" + UPDATE_REPO + "/releases/latest", 8000);
+  const tag = String(j.tag_name || "").replace(/^v/, "");
+  if (!tag) throw new Error("未获取到最新版本号");
+  if (semverCmp(APP_VERSION, tag) >= 0) return { ok: true, version: tag, already: true };
+  const plat = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
+  const asset = (j.assets || []).find((a) => a.name === "mindweave-" + tag + "-" + plat + ".zip");
+  if (!asset) throw new Error("最新版本缺少 " + plat + " 安装包");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mindweave-upd-"));
+  try {
+    const zipPath = path.join(tmp, "pkg.zip");
+    await httpsDownload(asset.browser_download_url, zipPath);
+    if (fs.statSync(zipPath).size < 10000) throw new Error("下载包异常（过小）");
+    const exDir = path.join(tmp, "ex");
+    fs.mkdirSync(exDir);
+    const r = process.platform === "win32"
+      ? spawnSync("tar", ["-xf", zipPath, "-C", exDir], { encoding: "utf8" })
+      : spawnSync("unzip", ["-o", "-q", zipPath, "-d", exDir], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error("解压失败：" + String(r.stderr || (r.error && r.error.message) || "").slice(0, 200));
+    const src = path.join(exDir, "mindweave");
+    if (!fs.existsSync(path.join(src, "mindweave.html"))) throw new Error("包内容不完整");
+    const target = process.env.MINDWEAVE_UPDATE_TARGET || ROOT;
+    fs.cpSync(src, target, { recursive: true, force: true, filter: (s) => s.indexOf(".mindweave") < 0 });
+    return { ok: true, version: tag };
+  } finally {
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
+  }
+}
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
@@ -500,6 +585,14 @@ const server = http.createServer(async (req, res) => {
       if (group && group !== "未分组") DS.setGroupIndexLine(group, noteId, title, oneline);
       sendJson(res, 200, { ok: true, oneline });
     } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+  if (req.method === "GET" && url === "/api/update/check") {
+    sendJson(res, 200, await updateCheck(req.url.includes("force=1")));
+    return;
+  }
+  if (req.method === "POST" && url === "/api/update/apply") {
+    try { sendJson(res, 200, await updateApply()); } catch (e) { sendJson(res, 500, { error: e.message }); }
     return;
   }
   if (req.method === "GET") {
