@@ -1,5 +1,11 @@
 # 思脉 MindWeave
 
+> **MindWeave** — a single-page *human ↔ AI co-writing* canvas that keeps a **mind map** and a **Markdown** document in two-way sync, with a local bridge that drives your on-machine **Claude CLI** (no API key to paste, no mock).
+>
+> 思脉 MindWeave：人与 AI **双向写作**的思维导图 + Markdown 单页应用，三向实时同步，AI 流式输出时导图逐节点生长；配套本地桥接，直接接入本机 Claude CLI，无需粘贴 Key、不靠 mock。
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-clay.svg)](LICENSE)
+
 > 人与 AI **双向写作**的思维导图 + Markdown 单页应用。
 > 改字出图、改图出字、对话改图——三向实时同步；AI 流式输出时导图**逐节点生长**。
 > 配套本地桥接，**直接接入本机 Claude CLI**，无需填 Key、不靠 mock。
