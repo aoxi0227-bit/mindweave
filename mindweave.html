@@ -249,7 +249,7 @@ select.f-input{cursor:pointer}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 </style>
-</head>
+<style>.sk-row{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:7px}.sk-row:hover{background:var(--sand)}.sk-dot{width:7px;height:7px;border-radius:50%;flex:none}.sk-name{flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}</style></head>
 <body>
 <div id="app">
   <aside id="sidebar">
@@ -267,10 +267,13 @@ select.f-input{cursor:pointer}
         <input id="searchInput" placeholder="搜索文档…">
       </div>
       <div id="docList"></div>
+      <div style="padding:8px 14px 2px;display:flex;align-items:center;gap:6px"><span style="font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--ink-2)">SKILLS</span><span id="skillCount" class="pane-stat"></span><span style="flex:1"></span><button id="skillCreateBtn" class="ibtn" title="新建 skill" style="width:22px;height:22px"></button><button id="skillInstallBtn" class="ibtn" title="从社区安装 skill" style="width:22px;height:22px"></button></div>
+      <div id="skillList" style="padding:0 10px 6px;max-height:150px;overflow:auto"></div>
       <button id="addGroupBtn" class="btn ghost wide"></button>
       <div class="sb-bottom">
         <button id="importBtn" class="btn line"></button>
         <button id="settingsBtn" class="btn line"></button>
+        <button id="memoryBtn" class="btn line" title="记忆（跨笔记/每笔记）"></button>
         <button id="themeToggleBtn" class="btn line" title="切换深浅主题"></button>
       </div>
     </div>
@@ -368,8 +371,11 @@ select.f-input{cursor:pointer}
       <div class="mode-cards">
         <div class="mode-card" id="mcMock"><b>内置演示（Mock）</b><span>不调用任何 API，用本地脚本演示流式改图。零配置、零成本。</span></div>
         <div class="mode-card" id="mcApi"><b>自定义 API / 本地模型</b><span>任意 OpenAI 兼容端点：Moonshot、DeepSeek、OpenAI、Ollama、LM Studio…</span></div>
-      <div class="mode-card" id="mcCli"><b>本地 Claude CLI 桥接（推荐）</b><span>识别本机 claude CLI 与其代理，经 server.js 走真实模型，无需填 Key、无 mock。</span></div>
+      <div class="mode-card" id="mcCli"><b>本地 CLI 桥接（推荐）</b><span>自动识别本机 claude / kimi / qwen / opencode 与本地代理，经 server.js 走真实模型，无需填 Key、无 mock。</span></div>
       </div>
+      <span class="f-label">后端模型（自动识别）</span>
+      <select class="f-input" id="backendSelect"></select>
+      <div class="f-note">启动 server.js 后自动列出检测到的本地代理与 CLI；选择即生效。Skill / Memory 会注入到所选后端的 system prompt。</div>
       <span class="f-label">本地服务探测</span>
       <div class="local-cards">
         <div class="local-card">
@@ -493,7 +499,7 @@ const TEMPLATES=[
 const DEFAULT_GROUPS=["头脑风暴","读书笔记","小说","未分组"];
 const SYSPROMPT="你是思维梳理助手，页面上与用户对话，旁边是一份用 Markdown（# 标题 + 两级空格缩进的 - 列表层级）表达的思维导图文档。\n规则：\n1. 正常用中文与用户讨论；当讨论产生了应沉淀到文档的内容，或用户要求修改文档时，在回复末尾另起一行输出 [[DOC]]，随后输出修改后的完整 Markdown。\n2. [[DOC]] 之后只输出 Markdown 本身，不要代码块标记、不要解释。\n3. 未提及的既有内容保持原样；层级最多不超过 5 层。\n4. 不需要修改文档时，不要输出 [[DOC]]。";
 
-let state={docs:[],groups:[],settings:{mode:"mock",baseURL:"",apiKey:"",model:""},ui:{dark:false,sideOpen:true,rightOpen:true,rightSplit:46,mapTheme:"clay",hintSeen:false,collapsedGroups:{}},activeId:null,customThemes:[]};
+let state={docs:[],groups:[],settings:{mode:"mock",baseURL:"",apiKey:"",model:"",backend:"",memoryScope:"global"},ui:{dark:false,sideOpen:true,rightOpen:true,rightSplit:46,mapTheme:"clay",hintSeen:false,collapsedGroups:{}},activeId:null,customThemes:[]};
 let tree=null, selectedId=null, collapsedNodes=new Set(), streamCtl=null;
 
 function save(key,val){try{localStorage.setItem(key,JSON.stringify(val))}catch(e){}}
@@ -941,7 +947,7 @@ function fillCliStatus(){const el=$("#cliStatus");if(!el)return;if(srvHealth&&sr
 async function checkServer(force){try{const r=await fetch("/api/health"+(force?"?force=1":""),{cache:"no-store"});if(!r.ok)throw new Error("http "+r.status);srvHealth=await r.json()}catch(e){srvHealth={cli:false,proxyOk:false,ready:false}}fillCliStatus();syncModelChip();return srvHealth}
 let _hb=null;
 function startHeartbeat(){if(_hb)return;const sameOrigin=location.protocol==="http:"||location.protocol==="https:";if(!sameOrigin)return;fetch("/api/hello").catch(()=>{});_hb=setInterval(()=>{fetch("/api/ping",{method:"POST"}).catch(()=>{})},2500);const bye=()=>{try{navigator.sendBeacon("/api/bye")}catch(e){}try{fetch("/api/bye",{method:"POST",keepalive:true}).catch(()=>{})}catch(e){}};window.addEventListener("beforeunload",bye);window.addEventListener("pagehide",bye)}
-async function cliChat(messages,onDelta,signal){const res=await fetch("/api/chat",{method:"POST",signal,headers:{"Content-Type":"application/json"},body:JSON.stringify({messages})});if(!res.ok){let m="HTTP "+res.status;try{const j=await res.json();m=j.error||m}catch(e){}throw new Error(m)}const rd=res.body.getReader(),dec=new TextDecoder();let buf="";while(true){const {done:dn,value}=await rd.read();if(dn)break;buf+=dec.decode(value,{stream:true});let i;while((i=buf.indexOf("\n"))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line.startsWith("data:"))continue;const data=line.slice(5).trim();if(!data)continue;try{const o=JSON.parse(data);if(o.text)onDelta(o.text);if(o.error)throw new Error(o.error)}catch(e){if(e.message&&e.message!=="Unexpected end of JSON input")throw e}}}}
+async function cliChat(messages,onDelta,signal){const res=await fetch("/api/chat",{method:"POST",signal,headers:{"Content-Type":"application/json"},body:JSON.stringify({messages,backend:state.settings.backend||undefined,noteId:activeDoc()?activeDoc().id:null})});if(!res.ok){let m="HTTP "+res.status;try{const j=await res.json();m=j.error||m}catch(e){}throw new Error(m)}const rd=res.body.getReader(),dec=new TextDecoder();let buf="";while(true){const {done:dn,value}=await rd.read();if(dn)break;buf+=dec.decode(value,{stream:true});let i;while((i=buf.indexOf("\n"))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line.startsWith("data:"))continue;const data=line.slice(5).trim();if(!data)continue;try{const o=JSON.parse(data);if(o.text)onDelta(o.text);if(o.error)throw new Error(o.error)}catch(e){if(e.message&&e.message!=="Unexpected end of JSON input")throw e}}}}
 function buildApiMessages(d,userText){
 const msgs=[{role:"system",content:SYSPROMPT+"\n\n当前文档：\n"+d.markdown}];
 (d.chat||[]).slice(0,-1).slice(-12).forEach(m=>{if(m.role==="user")msgs.push({role:"user",content:m.text});else msgs.push({role:"assistant",content:m.doc?m.text+"\n[[DOC]]\n"+m.doc:m.text})});
@@ -1071,7 +1077,7 @@ toast(state.settings.mode==="mock"?"已切换到 Mock 演示模式":"模型配�
 $("#srvReprobe").innerHTML=icon("refresh","icon sm")+"重新识别";$("#srvReprobe").onclick=()=>checkServer(true);
 function syncModelChip(){
 const s=state.settings;let t="Mock 演示";
-if(s.mode==="cli"){t=srvHealth&&srvHealth.ready?("本地 Claude · "+(srvHealth.model||"CLI")):(srvHealth&&srvHealth.cli?"本地 Claude · 启动中…":"本地 Claude · 未连接")}else if(s.mode==="api"){const b=s.baseURL||"";
+if(s.mode==="cli"){const sel=$("#backendSelect");const opt=sel&&sel.querySelector('option[value="'+(s.backend||"")+'"]');t=opt?opt.textContent.replace(/\s*\(不可用\)/,""):(srvHealth&&srvHealth.ready?"本地桥接":"本地桥接 · 启动中…")}else if(s.mode==="api"){const b=s.baseURL||"";
 if(b.includes("11434"))t="本地 Ollama"+(s.model?" · "+s.model:"");
 else if(b.includes("1234"))t="本地 LM Studio"+(s.model?" · "+s.model:"");
 else if(b.includes("moonshot"))t="Kimi"+(s.model?" · "+s.model:"");
@@ -1134,10 +1140,18 @@ $("#rightCol").classList.toggle("closed",!state.ui.rightOpen);
 $("#editorPane").style.flex="0 0 "+state.ui.rightSplit+"%";
 if(state.ui.hintSeen)$("#hintPill").style.display="none";
 syncThemeBtn();
-checkServer(false).then(h=>{if(h&&h.ready){if(!state.ui.modeExplicit){state.settings.mode="cli";persist()}startHeartbeat()}syncModelChip();renderDocList();loadDocToView();});
+loadBackends();renderSkills();$("#skillCreateBtn").innerHTML=icon("plus","icon sm");$("#skillInstallBtn").innerHTML=icon("up","icon sm");$("#skillCreateBtn").onclick=openCreateSkillModal;$("#skillInstallBtn").onclick=openInstallSkillModal;$("#memoryBtn").innerHTML=icon("book","icon sm")+"记忆";$("#memoryBtn").onclick=openMemoryModal;$("#backendSelect").addEventListener("change",e=>{state.settings.backend=e.target.value;persist();syncModelChip()});checkServer(false).then(h=>{if(h&&h.ready){if(!state.ui.modeExplicit){state.settings.mode="cli";persist()}startHeartbeat()}syncModelChip();renderDocList();loadDocToView();});
 setTimeout(()=>renderMap(false),60);
 }
 init();
+
+
+
+async function loadBackends(){try{const r=await fetch("/api/backends");if(!r.ok)return;const j=await r.json();const sel=$("#backendSelect");if(!sel)return;const cur=state.settings.backend;sel.innerHTML=j.backends.map(b=>`<option value="${b.id}">${b.label}${b.ready?"":" (不可用)"}</option>`).join("");if(j.backends.find(b=>b.id===cur))sel.value=cur;else if(j.backends.length){state.settings.backend=j.backends[0].id;sel.value=state.settings.backend}syncModelChip()}catch(e){}}
+async function renderSkills(){try{const r=await fetch("/api/skills");if(!r.ok)return;const j=await r.json();$("#skillCount").textContent=j.skills.length;$("#skillList").innerHTML=j.skills.map(s=>`<div class="sk-row"><span class="sk-dot" style="background:${s.enabled?"var(--ok)":"var(--ink-3)"}"></span><span class="sk-name" title="${(s.description||"").replace(/"/g,"&quot;")}">${esc(s.displayName||s.name)}${s.symlink?" 🔗":""}${s.global?" (全局)":""}</span>${s.global?"":`<button class="ibtn sk-tog" data-n="${s.name}" title="启用/禁用" style="width:20px;height:20px">${icon(s.enabled?"check":"x","icon sm")}</button>`}<button class="ibtn danger sk-del" data-n="${s.name}" title="删除" style="width:20px;height:20px">${icon("trash","icon sm")}</button></div>`).join("");$("#skillList").querySelectorAll(".sk-tog").forEach(b=>b.onclick=async()=>{const sk=(await(await fetch("/api/skills")).json()).skills.find(x=>x.name===b.dataset.n);await fetch("/api/skills/"+encodeURIComponent(b.dataset.n)+"/enabled",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:!sk.enabled})});renderSkills()});$("#skillList").querySelectorAll(".sk-del").forEach(b=>b.onclick=async()=>{if(confirm("删除 skill「"+b.dataset.n+"」？")){await fetch("/api/skills/"+encodeURIComponent(b.dataset.n),{method:"DELETE"});renderSkills()}})}catch(e){}}
+function openCreateSkillModal(){const name=prompt("skill 名字（kebab-case，如 my-skill）：");if(!name)return;const desc=prompt("一句话描述（决定 AI 何时使用它）：")||"";const md="---\nname: "+name+"\ndescription: "+desc+"\n---\n\n# "+name+"\n\n在此写执行步骤。涉及本应用可调用本地桥接接口（同源）：\n- GET /api/skills 、POST /api/skills 、GET /api/memory\n";fetch("/api/skills",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,md})}).then(()=>{toast("已创建 skill「"+name+"」");renderSkills()})}
+function openInstallSkillModal(){fetch("/api/catalogs").then(r=>r.json()).then(c=>{const regs=(c.registries||[]).join(", ")||"（无，可在 .mindweave/config.json 的 registries 添加）";const url=prompt("从社区安装 skill。\n当前 registries: "+regs+"\n\n粘贴 SKILL.md 的 raw URL（或 GitHub 文件链接）：");if(!url)return;const name=prompt("安装为名字（kebab-case）：")||url.split("/").filter(Boolean).pop().replace(/\.md$/,"");if(!name)return;fetch("/api/skills/install",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,url})}).then(r=>r.json()).then(j=>{if(j.ok){toast("已安装 skill「"+name+"」");renderSkills()}else alert("安装失败："+j.error)})})}
+function openMemoryModal(){fetch("/api/catalogs").then(r=>r.json()).then(c=>{const scope=c.memoryScope||"global";const noteId=activeDoc()?activeDoc().id:null;fetch("/api/memory?scope="+scope+"&noteId="+noteId).then(r=>r.json()).then(m=>{const ov=document.createElement("div");ov.className="modal-layer open";const curTxt=esc((scope==="note"?m.entries.note:m.entries.global)||"");ov.innerHTML=`<div class="modal" style="width:min(520px,92vw)"><div class="modal-head"><span class="modal-title">记忆 Memory</span><button class="ibtn mx"></button></div><div class="modal-body"><span class="f-label">作用域</span><select class="f-input mscope"><option value="global"${scope==="global"?" selected":""}>全局（跨笔记）</option><option value="note"${scope==="note"?" selected":""}>仅当前笔记</option></select><span class="f-label">内容（Markdown）</span><textarea class="f-input mtext" style="height:220px;font-family:var(--mono);font-size:12px;line-height:1.6;white-space:pre">${curTxt}</textarea><div class="f-note">全局记忆注入到所有笔记的对话；每笔记记忆仅当前导图。AI 每次对话前都会读取。</div></div><div class="modal-foot"><button class="btn ghost mc">取消</button><button class="btn primary msav">保存</button></div></div>`;document.body.appendChild(ov);ov.querySelector(".mx").innerHTML=icon("x");const close=()=>ov.remove();ov.querySelector(".mx").onclick=close;ov.querySelector(".mc").onclick=close;ov.onclick=e=>{if(e.target===ov)close()};ov.querySelector(".msav").onclick=()=>{const ns=ov.querySelector(".mscope").value;const txt=ov.querySelector(".mtext").value;fetch("/api/memory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({scope:ns,noteId,txt})}).then(()=>{state.settings.memoryScope=ns;persist();toast("记忆已保存");close()})}})})}
 
 </script>
 </body>

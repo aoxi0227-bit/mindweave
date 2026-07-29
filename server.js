@@ -8,6 +8,7 @@ const os = require("os");
 const ROOT = __dirname;
 const PORT = parseInt(process.env.PORT || "4317", 10);
 const SETTINGS = path.join(os.homedir(), ".claude", "settings.json");
+const SM = require("./skills-memory"); SM.ensure();
 
 function readCliConfig() {
   try {
@@ -179,24 +180,14 @@ function readBody(req) {
   });
 }
 
-async function handleChat(req, res) {
+async function handleChatHttp(req, res, payload, system, model) {
   const env = readCliConfig();
   const baseUrl = (env.ANTHROPIC_BASE_URL || "").replace(/\/+$/, "");
   if (!baseUrl) {
     sendJson(res, 500, { error: "未读取到本地 Claude CLI 的 ANTHROPIC_BASE_URL（~/.claude/settings.json）" });
     return;
   }
-  let payload;
-  try {
-    payload = JSON.parse(await readBody(req));
-  } catch (e) {
-    sendJson(res, 400, { error: "bad json" });
-    return;
-  }
-  const h = await health(false);
-  const model = (payload.model && String(payload.model).trim()) || h.model || "MiniMax-M3";
   const messages = Array.isArray(payload.messages) ? payload.messages : [];
-  let system = "";
   const convo = [];
   for (const m of messages) {
     if (m.role === "system") system += (system ? "\n\n" : "") + m.content;
@@ -217,7 +208,7 @@ async function handleChat(req, res) {
   };
 
   const body = JSON.stringify({
-    model,
+    model: model || "MiniMax-M3",
     max_tokens: payload.max_tokens || 4000,
     stream: true,
     system: system || undefined,
@@ -315,6 +306,98 @@ async function handleChat(req, res) {
   });
 }
 
+function findBin(names, extra) {
+  const pathEnv = (process.env.PATH || "").split(path.delimiter);
+  const cands = [].concat(extra || []);
+  for (const n of names) for (const d of pathEnv) cands.push(path.join(d, n));
+  for (const c of cands) { try { if (c && fs.existsSync(c)) return c; } catch (e) {} }
+  return null;
+}
+let _verCache = {};
+function cliVersion(bin) {
+  if (_verCache[bin] !== undefined) return Promise.resolve(_verCache[bin]);
+  return new Promise((res) => {
+    const p = spawn(bin, ["--version"], { stdio: ["ignore", "pipe", "ignore"] });
+    let o = ""; let done = false; const fin = (v) => { if (done) return; done = true; _verCache[bin] = v; res(v); };
+    p.stdout.on("data", (d) => (o += d)); p.on("close", () => fin(o.trim().split("\n")[0])); p.on("error", () => fin(""));
+    setTimeout(() => { try { p.kill(); } catch (e) {} fin(o.trim().split("\n")[0]); }, 2500);
+  });
+}
+const CLI_SPECS = [
+  { id: "claude", names: ["claude"], extra: [path.join(os.homedir(), ".local", "bin", "claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude"], prompt: ["-p"], sys: ["--system-prompt"], flags: ["--verbose"], label: "Claude Code" },
+  { id: "kimi", names: ["kimi"], extra: [path.join(os.homedir(), ".kimi-code", "bin", "kimi")], prompt: ["-p"], sys: [], label: "Kimi Code" },
+  { id: "qwen", names: ["qwen"], extra: ["/opt/homebrew/bin/qwen", "/usr/local/bin/qwen"], prompt: ["-p"], sys: ["--system-prompt"], label: "Qwen Code" },
+  { id: "opencode", names: ["opencode"], extra: [path.join(os.homedir(), ".opencode", "bin", "opencode")], prompt: ["run"], sys: [], label: "OpenCode" },
+];
+function detectClis() {
+  return CLI_SPECS.map((sp) => { const bin = findBin(sp.names, sp.extra); return { id: sp.id, label: sp.label, bin, version: null }; }).filter((x) => x.bin);
+}
+function parseCliLine(line, onText) {
+  if (!line || !line.trim()) return;
+  let o; try { o = JSON.parse(line); } catch (e) { onText(line + "\n"); return; }
+  const collect = (v) => { if (typeof v === "string") onText(v); else if (Array.isArray(v)) v.forEach((x) => { if (typeof x === "string") onText(x); else if (x && typeof x.text === "string") onText(x.text); }); };
+  if (o.role === "assistant" && "content" in o) { collect(o.content); return; }
+  const t = o.type;
+  if (t === "stream_event" && o.event) { const ev = o.event; if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "text_delta" && ev.delta.text) onText(ev.delta.text); return; }
+  if (t === "content_block_delta" && o.delta && o.delta.text) { onText(o.delta.text); return; }
+  if (t === "assistant" && o.message && o.message.content) { const txt = (o.message.content || []).filter((c) => c && c.type === "text").map((c) => c.text || "").join(""); if (txt) onText(txt); return; }
+  if (t === "message" && "content" in o) { collect(o.content); return; }
+  if (t === "text" && typeof o.text === "string") { onText(o.text); return; }
+  if (t === "result" && typeof o.result === "string") { onText(o.result); return; }
+}
+function runCliChat(spec, promptText, systemText, write) {
+  const args = [];
+  if (systemText && spec.sys && spec.sys.length) args.push(spec.sys[0], systemText);
+  args.push(spec.prompt[0], promptText);
+  if (spec.flags) for (const f of spec.flags) args.push(f);
+  args.push("--output-format", "stream-json");
+  let bin = spec.bin; if (!bin) { const sp = CLI_SPECS.find((x) => x.id === spec.id); bin = sp ? findBin(sp.names, sp.extra) : null; }
+  if (!bin) { write({ error: "找不到 " + (spec.label || spec.id) + " 的可执行文件" }); return; }
+  const argv = args.map((a) => String(a == null ? "" : a));
+  console.log("[runCliChat] spawn", bin, JSON.stringify(argv));
+  const child = spawn(String(bin), argv, { stdio: ["ignore", "pipe", "pipe"] });
+  let buf = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { buf += chunk; let i; while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); parseCliLine(line, (t) => write({ text: t })); } });
+  let err = ""; child.stderr.setEncoding("utf8"); child.stderr.on("data", (d) => (err += d));
+  child.on("error", (e) => write({ error: "启动 " + spec.label + " 失败：" + e.message }));
+  child.on("close", (code) => { if (buf.trim()) parseCliLine(buf, (t) => write({ text: t })); if (code && code !== 0) write({ error: spec.label + " 退出码 " + code + (err ? "：" + err.slice(0, 300) : "") }); write({ done: true }); });
+  return child;
+}
+async function handleChat(req, res) {
+  let payload; try { payload = JSON.parse(await readBody(req)); } catch (e) { sendJson(res, 400, { error: "bad json" }); return; }
+  const messages = Array.isArray(payload.messages) ? payload.messages : [];
+  const noteId = payload.noteId || null;
+  const baseSys = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
+  const system = SM.buildSystem(baseSys, noteId);
+  const convo = messages.filter((m) => m.role !== "system");
+  const h = await health(false);
+  const reqBackend = (payload.backend || "").toString();
+  const backends = await listBackends(h);
+  let backend = backends.find((b) => b.id === reqBackend) || backends.find((b) => b.ready) || backends[0];
+  res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*", "X-Accel-Buffering": "no" });
+  const write = (obj) => { try { res.write("data: " + JSON.stringify(obj) + "\n\n"); } catch (e) {} };
+  if (!backend) { write({ error: "未检测到任何可用后端（无本地代理，也无 claude/kimi/qwen/opencode CLI）" }); res.end(); return; }
+  write({ backend: backend.id, label: backend.label });
+  console.log("[handleChat] chosen backend:", backend && backend.id, "type:", backend && backend.type, "spec.bin:", backend && backend.spec && backend.spec.bin, "spec.names:", backend && backend.spec && JSON.stringify(backend.spec.names));
+  if (backend.type === "cli") {
+    let promptText = convo.map((m) => (m.role === "assistant" ? "助手：" : "用户：") + (m.content || "")).join("\n\n");
+    if (!promptText) promptText = "你好";
+    if (system) promptText = "[系统指令]\n" + system + "\n\n[对话]\n" + promptText + "\n\n请按以上系统指令回答最后一条用户消息。";
+    const child = runCliChat(backend.spec, promptText, system, write);
+    req.on("close", () => { try { child.kill(); } catch (e) {} });
+    return;
+  }
+  await handleChatHttp(req, res, payload, system, backend.model || payload.model);
+}
+async function listBackends(h) {
+  const out = [];
+  if (h.proxyOk) out.push({ id: "claude-proxy", label: "本地代理 (cc-switch)", type: "http", ready: true, models: h.models, model: h.model });
+  const clis = detectClis();
+  await Promise.all(clis.map(async (c) => { c.version = await cliVersion(c.bin); }));
+  for (const c of clis) out.push({ id: c.id, label: c.label + " CLI", type: "cli", ready: true, version: c.version, spec: CLI_SPECS.find((s) => s.id === c.id) });
+  return out;
+}
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
@@ -344,6 +427,31 @@ const server = http.createServer(async (req, res) => {
     clients = Math.max(0, clients - 1); touch();
     if (clients <= 0) scheduleExit();
     sendJson(res, 200, { ok: true, clients }); return;
+  }
+  if (req.method === "GET" && url === "/api/system") {
+    const q = new URL(req.url, "http://x").searchParams; sendJson(res, 200, { system: SM.buildSystem(q.get("base") || "", q.get("noteId") || null) }); return;
+  }
+  if (req.method === "GET" && url === "/api/backends") { sendJson(res, 200, { backends: await listBackends(await health(false)) }); return; }
+  if (req.method === "GET" && url === "/api/catalogs") { sendJson(res, 200, SM.catalogs()); return; }
+  if (url === "/api/skills" || url === "/api/skills/") {
+    if (req.method === "GET") { const q = new URL(req.url, "http://x").searchParams; const d = q.get("detail"); if (d) { const sk = SM.getSkill(d); sendJson(res, 200, sk || { error: "not found" }); } else sendJson(res, 200, { skills: SM.listSkills().map((s) => ({ name: s.name, displayName: s.displayName, description: s.description, enabled: SM.skillEnabled(s.name), symlink: !!s.symlink, global: !!s.global })) }); return; }
+    if (req.method === "POST") { const b = JSON.parse(await readBody(req)); SM.createSkill(b.name, b.md || ""); sendJson(res, 200, { ok: true }); return; }
+  }
+  if (req.method === "POST" && url === "/api/skills/install") {
+    try { const b = JSON.parse(await readBody(req)); const u = new URL(b.url); const r = await httpJson(b.url, { headers: { "User-Agent": "mindweave" } }, 15000); if (r.status !== 200) throw new Error("HTTP " + r.status); SM.createSkill(b.name, r.body); sendJson(res, 200, { ok: true }); }
+    catch (e) { sendJson(res, 500, { error: e.message }); } return;
+  }
+  if (req.method === "POST" && url === "/api/skills/link") {
+    try { const b = JSON.parse(await readBody(req)); SM.linkSkill(b.name, b.target); sendJson(res, 200, { ok: true }); } catch (e) { sendJson(res, 500, { error: e.message }); } return;
+  }
+  const mS = url.match(/^\/api\/skills\/([^/]+)\/enabled\/?$/);
+  if (mS && req.method === "POST") { const b = JSON.parse(await readBody(req)); SM.setSkillEnabled(decodeURIComponent(mS[1]), !!b.enabled); sendJson(res, 200, { ok: true }); return; }
+  const mD = url.match(/^\/api\/skills\/([^/]+)\/?$/);
+  if (mD && req.method === "DELETE") { SM.deleteSkill(decodeURIComponent(mD[1])); sendJson(res, 200, { ok: true }); return; }
+  if (url === "/api/memory" || url === "/api/memory/") {
+    const q = new URL(req.url, "http://x").searchParams; const scope = q.get("scope") || SM.readCfg().memoryScope || "global"; const noteId = q.get("noteId") || null;
+    if (req.method === "GET") { sendJson(res, 200, { scope, entries: SM.combinedMem(noteId) }); return; }
+    if (req.method === "POST") { const b = JSON.parse(await readBody(req)); SM.writeMem(b.scope || scope, b.noteId || noteId, b.text || ""); sendJson(res, 200, { ok: true }); return; }
   }
   if (req.method === "GET") {
     serveStatic(req, res);

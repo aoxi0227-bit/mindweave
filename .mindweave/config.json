@@ -1,0 +1,9 @@
+{
+  "memoryScope": "global",
+  "registries": [
+    "https://github.com/anthropics/skills"
+  ],
+  "disabledSkills": [
+    "demo-note"
+  ]
+}
