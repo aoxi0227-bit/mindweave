@@ -1,0 +1,6 @@
+.DS_Store
+*.log
+demo/
+app/
+node_modules/
+*.local.json
