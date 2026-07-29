@@ -7,3 +7,5 @@ node_modules/
 .server.pid
 .server.lock
 思脉MindWeave.app/
+dist/
+*.zip
