@@ -55,6 +55,29 @@ function httpJson(url, opts, timeoutMs) {
 }
 
 let cache = { t: 0, val: null };
+
+const PIDFILE = process.env.PIDFILE || path.join(ROOT, ".server.pid");
+const LOCKFILE = process.env.LOCKFILE || path.join(ROOT, ".server.lock");
+let clients = 0, lastSeen = Date.now(), graceTimer = null, hbTimer = null;
+const GRACE_MS = 7000, HB_TIMEOUT_MS = 120000, START_GRACE_MS = 90000;
+const startedAt = Date.now();
+function writePid() { try { fs.writeFileSync(PIDFILE, String(process.pid)); } catch (e) {} }
+function clearPid() {
+  try { const p = parseInt(fs.readFileSync(PIDFILE, "utf8"), 10); if (p === process.pid) fs.unlinkSync(PIDFILE); } catch (e) {}
+  try { fs.unlinkSync(LOCKFILE); } catch (e) {}
+}
+function scheduleExit() {
+  if (graceTimer) return;
+  graceTimer = setTimeout(() => { if (clients <= 0) { console.log("[mindweave-bridge] no clients, shutting down"); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 1500); } else graceTimer = null; }, GRACE_MS);
+}
+function touch() { lastSeen = Date.now(); if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; } }
+function armHb() {
+  if (hbTimer) return;
+  hbTimer = setInterval(() => { if (Date.now() - startedAt < START_GRACE_MS) return; if (Date.now() - lastSeen > HB_TIMEOUT_MS) { console.log("[mindweave-bridge] heartbeat timeout, shutting down"); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 1500); } }, 5000);
+}
+process.on("SIGTERM", () => { clearPid(); process.exit(0); });
+process.on("SIGINT", () => { clearPid(); process.exit(0); });
+process.on("exit", clearPid);
 async function health(force) {
   if (!force && cache.val && Date.now() - cache.t < 8000) return cache.val;
   const env = readCliConfig();
@@ -92,6 +115,7 @@ async function health(force) {
       }
     } catch (e) {}
   }
+  touch();
   const val = {
     cli: !!bin,
     cliPath: bin,
@@ -310,6 +334,17 @@ const server = http.createServer(async (req, res) => {
     await handleChat(req, res);
     return;
   }
+  if (req.method === "GET" && (url === "/api/hello" || url === "/api/ping")) {
+    clients++; touch(); sendJson(res, 200, { ok: true, clients }); return;
+  }
+  if (req.method === "POST" && (url === "/api/ping" || url === "/api/hello")) {
+    if (url === "/api/hello") clients++; touch(); sendJson(res, 200, { ok: true, clients }); return;
+  }
+  if ((req.method === "POST" || req.method === "GET") && url === "/api/bye") {
+    clients = Math.max(0, clients - 1); touch();
+    if (clients <= 0) scheduleExit();
+    sendJson(res, 200, { ok: true, clients }); return;
+  }
   if (req.method === "GET") {
     serveStatic(req, res);
     return;
@@ -319,6 +354,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
+  writePid(); armHb();
   health(true)
     .then((h) => {
       console.log("[mindweave-bridge] listening on http://127.0.0.1:" + PORT);

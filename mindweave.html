@@ -925,6 +925,8 @@ function setGenerating(v){generating=v;$("#sendBtn").disabled=v;$("#stopBtn").cl
 let srvHealth=null;
 function fillCliStatus(){const el=$("#cliStatus");if(!el)return;if(srvHealth&&srvHealth.ready){el.className="lc-state ok";el.textContent="✓ 检测到 claude CLI "+(srvHealth.cliVersion||"")+" · 代理 "+(srvHealth.baseUrl||"").replace(/^https?:\/\//,"")+" · 模型 "+(srvHealth.model||"-")}else if(srvHealth&&srvHealth.cli){el.className="lc-state err";el.textContent="⚠ 检测到 CLI，但代理未连通："+(srvHealth.baseUrl||"无 BASE_URL")}else{el.className="lc-state err";el.textContent="未检测到本地桥接（server.js 未运行或 claude CLI 缺失）"}}
 async function checkServer(force){try{const r=await fetch("/api/health"+(force?"?force=1":""),{cache:"no-store"});if(!r.ok)throw new Error("http "+r.status);srvHealth=await r.json()}catch(e){srvHealth={cli:false,proxyOk:false,ready:false}}fillCliStatus();syncModelChip();return srvHealth}
+let _hb=null;
+function startHeartbeat(){if(_hb)return;const sameOrigin=location.protocol==="http:"||location.protocol==="https:";if(!sameOrigin)return;fetch("/api/hello").catch(()=>{});_hb=setInterval(()=>{fetch("/api/ping",{method:"POST"}).catch(()=>{})},2500);const bye=()=>{try{navigator.sendBeacon("/api/bye")}catch(e){}try{fetch("/api/bye",{method:"POST",keepalive:true}).catch(()=>{})}catch(e){}};window.addEventListener("beforeunload",bye);window.addEventListener("pagehide",bye)}
 async function cliChat(messages,onDelta,signal){const res=await fetch("/api/chat",{method:"POST",signal,headers:{"Content-Type":"application/json"},body:JSON.stringify({messages})});if(!res.ok){let m="HTTP "+res.status;try{const j=await res.json();m=j.error||m}catch(e){}throw new Error(m)}const rd=res.body.getReader(),dec=new TextDecoder();let buf="";while(true){const {done:dn,value}=await rd.read();if(dn)break;buf+=dec.decode(value,{stream:true});let i;while((i=buf.indexOf("\n"))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line.startsWith("data:"))continue;const data=line.slice(5).trim();if(!data)continue;try{const o=JSON.parse(data);if(o.text)onDelta(o.text);if(o.error)throw new Error(o.error)}catch(e){if(e.message&&e.message!=="Unexpected end of JSON input")throw e}}}}
 function buildApiMessages(d,userText){
 const msgs=[{role:"system",content:SYSPROMPT+"\n\n当前文档：\n"+d.markdown}];
@@ -1118,7 +1120,7 @@ $("#rightCol").classList.toggle("closed",!state.ui.rightOpen);
 $("#editorPane").style.flex="0 0 "+state.ui.rightSplit+"%";
 if(state.ui.hintSeen)$("#hintPill").style.display="none";
 syncThemeBtn();
-checkServer(false).then(h=>{if(h&&h.ready&&!state.ui.modeExplicit){state.settings.mode="cli";persist()}syncModelChip();renderDocList();loadDocToView();});
+checkServer(false).then(h=>{if(h&&h.ready){if(!state.ui.modeExplicit){state.settings.mode="cli";persist()}startHeartbeat()}syncModelChip();renderDocList();loadDocToView();});
 setTimeout(()=>renderMap(false),60);
 }
 init();

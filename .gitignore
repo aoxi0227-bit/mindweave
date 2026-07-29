@@ -4,3 +4,6 @@ demo/
 app/
 node_modules/
 *.local.json
+.server.pid
+.server.lock
+思脉MindWeave.app/
