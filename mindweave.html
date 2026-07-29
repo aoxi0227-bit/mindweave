@@ -1070,7 +1070,7 @@ if(res.ok){tm.className="ok";tm.textContent="✓ 连接成功 · "+ms+"ms"}
 else{let m="HTTP "+res.status;try{const j=await res.json();m=j.error&&j.error.message?j.error.message:m}catch(e){}tm.className="err";tm.textContent="✗ "+m}}
 catch(e){tm.className="err";tm.textContent="✗ "+(e.name==="AbortError"?"超时":"无法连接，请检查地址与 CORS")}};
 $("#setSave").onclick=()=>{
-state.settings.mode=mcMock.classList.contains("on")?"mock":"api";
+state.settings.mode=mcCli.classList.contains("on")?"cli":mcApi.classList.contains("on")?"api":"mock";
 state.settings.baseURL=$("#setBase").value.trim();state.settings.apiKey=$("#setKey").value.trim();state.settings.model=$("#setModel").value.trim();
 persist();closeModal("setModal");syncModelChip();
 toast(state.settings.mode==="mock"?"已切换到 Mock 演示模式":"模型配置已保存")};
