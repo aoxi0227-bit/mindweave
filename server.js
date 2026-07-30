@@ -636,7 +636,7 @@ function selfRestart() {
         detached: true,
         stdio: "ignore",
         windowsHide: true,
-        env: Object.assign({}, process.env, { PORT: String(PORT), MW_ROOT: ROOT }),
+        env: Object.assign({}, process.env, { PORT: String(PORT), MW_ROOT: ROOT, MINDWEAVE_RESTART: "1" }),
       });
       child.unref();
     } catch (e) {}
