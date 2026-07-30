@@ -423,18 +423,24 @@ const CLI_SPECS = [
 function detectClis() {
   return CLI_SPECS.map((sp) => { const bin = findBin(sp.names, sp.extra); return { id: sp.id, label: sp.label, bin, version: null }; }).filter((x) => x.bin);
 }
-function parseCliLine(line, onText) {
+// st 用于跨行记录"本轮是否已经产出过正文"。CLI（如 claude --output-format
+// stream-json）会先发 assistant/delta 事件，最后再发一个 result 事件重复同样的
+// 全文；两者都往外写就会让每条回复在页面上出现两遍。result 只作兜底。
+function parseCliLine(line, onText, st) {
   if (!line || !line.trim()) return;
-  let o; try { o = JSON.parse(line); } catch (e) { onText(line + "\n"); return; }
-  const collect = (v) => { if (typeof v === "string") onText(v); else if (Array.isArray(v)) v.forEach((x) => { if (typeof x === "string") onText(x); else if (x && typeof x.text === "string") onText(x.text); }); };
+  const s = st || {};
+  const emit = (x) => { if (x) { s.streamed = true; onText(x); } };
+  let o; try { o = JSON.parse(line); } catch (e) { emit(line + "\n"); return; }
+  const collect = (v) => { if (typeof v === "string") emit(v); else if (Array.isArray(v)) v.forEach((x) => { if (typeof x === "string") emit(x); else if (x && typeof x.text === "string") emit(x.text); }); };
   if (o.role === "assistant" && "content" in o) { collect(o.content); return; }
   const t = o.type;
-  if (t === "stream_event" && o.event) { const ev = o.event; if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "text_delta" && ev.delta.text) onText(ev.delta.text); return; }
-  if (t === "content_block_delta" && o.delta && o.delta.text) { onText(o.delta.text); return; }
-  if (t === "assistant" && o.message && o.message.content) { const txt = (o.message.content || []).filter((c) => c && c.type === "text").map((c) => c.text || "").join(""); if (txt) onText(txt); return; }
+  if (t === "stream_event" && o.event) { const ev = o.event; if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "text_delta" && ev.delta.text) emit(ev.delta.text); return; }
+  if (t === "content_block_delta" && o.delta && o.delta.text) { emit(o.delta.text); return; }
+  if (t === "assistant" && o.message && o.message.content) { const txt = (o.message.content || []).filter((c) => c && c.type === "text").map((c) => c.text || "").join(""); if (txt) emit(txt); return; }
   if (t === "message" && "content" in o) { collect(o.content); return; }
-  if (t === "text" && typeof o.text === "string") { onText(o.text); return; }
-  if (t === "result" && typeof o.result === "string") { onText(o.result); return; }
+  if (t === "text" && typeof o.text === "string") { emit(o.text); return; }
+  // result 是本轮全文汇总：只有在流式事件一个字都没给出时才用，否则重复
+  if (t === "result" && typeof o.result === "string") { if (!s.streamed) emit(o.result); return; }
 }
 function runCliChat(spec, promptText, systemText, write) {
   const args = [];
@@ -448,11 +454,12 @@ function runCliChat(spec, promptText, systemText, write) {
   console.log("[runCliChat] spawn", bin, JSON.stringify(argv));
   const child = spawnCli(String(bin), argv, { stdio: ["ignore", "pipe", "pipe"] });
   let buf = "";
+  const st = {};   // 本轮解析状态：是否已产出正文（供 result 兜底判断）
   child.stdout.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => { buf += chunk; let i; while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); parseCliLine(line, (t) => write({ text: t })); } });
+  child.stdout.on("data", (chunk) => { buf += chunk; let i; while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); parseCliLine(line, (t) => write({ text: t }), st); } });
   let err = ""; child.stderr.setEncoding("utf8"); child.stderr.on("data", (d) => (err += d));
   child.on("error", (e) => write({ error: "启动 " + spec.label + " 失败：" + e.message }));
-  child.on("close", (code) => { if (buf.trim()) parseCliLine(buf, (t) => write({ text: t })); if (code && code !== 0) write({ error: spec.label + " 退出码 " + code + (err ? "：" + err.slice(0, 300) : "") }); write({ done: true }); });
+  child.on("close", (code) => { if (buf.trim()) parseCliLine(buf, (t) => write({ text: t }), st); if (code && code !== 0) write({ error: spec.label + " 退出码 " + code + (err ? "：" + err.slice(0, 300) : "") }); write({ done: true }); });
   return child;
 }
 async function handleChat(req, res) {

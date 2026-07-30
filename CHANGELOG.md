@@ -19,6 +19,10 @@ Windows 上桥接始终报 `spawn ...\npm\claude ENOENT`，四个 backend（clau
 - 改为解析 npm shim 末行的 `"%dp0%\<真实入口>" %*`，拿到真实目标后绕开 cmd.exe 直接启动：`.exe` 直接 spawn，`.js/.cjs/.mjs` 走 `process.execPath`。两者都是数组式 argv，多行提示词逐字节原样送达
 - 非 npm 结构的 shim 仍回落到 `cmd.exe /d /s /c`，但改为逐参数加引号，尽量减少损伤
 
+### 顺带修复：每条回复在页面上显示两遍
+- `claude --output-format stream-json` 会先发 `assistant` / delta 事件，最后再发一个 `result` 事件**重复同样的全文**，而 `parseCliLine` 两条分支都往外写，于是每条回复输出两次（全平台存在，此前 Windows 根本跑不起来所以没暴露）
+- `parseCliLine` 增加跨行解析状态，`result` 降级为兜底——仅当流式事件一个字都没产出时才使用
+
 ## [v1.5] — 双向文件同步 + 回收站 + 顶栏热更新图标
 
 ### 双向文件同步
