@@ -123,10 +123,11 @@ function memoryForQuery(noteId, group) {
 }
 function buildSystem(base, ctx) {
   let s = base || "";
+  let extra = "";
   const sk = require("./skills-memory");
-  try { s += sk.skillsPrompt ? sk.skillsPrompt() : ""; } catch (e) {}
-  // memory injection (per-note + group index)
-  if (ctx && ctx.noteId) { const m = memoryForQuery(ctx.noteId, ctx.group || UNGROUPED); let mem = ""; if (m.groupIdx) mem += "\n\n" + m.groupIdx; if (m.noteMem && m.noteMem.trim()) mem += "\n\n## 当前笔记《" + (ctx.title || "") + "》的记忆\n" + m.noteMem.trim(); if (mem) s += "\n\n# 本应用 Memory（回答前先参考；已按组归档，定位到当前笔记）" + mem; }
+  try { extra += sk.skillsPrompt ? sk.skillsPrompt() : ""; } catch (e) {}
+  if (ctx && ctx.noteId) { const m = memoryForQuery(ctx.noteId, ctx.group || UNGROUPED); let mem = ""; if (m.groupIdx) mem += "\n\n" + m.groupIdx; if (m.noteMem && m.noteMem.trim()) mem += "\n\n## 当前笔记《" + (ctx.title || "") + "》的记忆\n" + m.noteMem.trim(); if (mem) extra += "\n\n# 本应用 Memory（回答前先参考；已按组归档，定位到当前笔记）" + mem; }
+  if (extra) { const di = s.indexOf("\n\n当前文档：\n"); if (di >= 0) s = s.slice(0, di) + "\n" + extra + s.slice(di); else s += extra; }
   return s;
 }
 

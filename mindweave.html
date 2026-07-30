@@ -1080,7 +1080,7 @@ if(i>=0){if(i>0)this.onChat(this.buf.slice(0,i));this.buf=this.buf.slice(i+7);th
 const m=this.buf.match(/^\s*```[^\n]*\n/);if(m){this.buf=this.buf.slice(m[0].length);this.fence=true}}
 else{if(this.buf.length>8){this.onChat(this.buf.slice(0,-8));this.buf=this.buf.slice(-8)}return}}
 let nl;while((nl=this.buf.indexOf("\n"))>=0){let line=this.buf.slice(0,nl);this.buf=this.buf.slice(nl+1);
-const t=line.trim();if(this.fence&&/^```/.test(t)){this.fenceClosed=true;continue}if(this.fenceClosed)continue;
+const t=line.trim();if(this.fence&&/^```/.test(t)){this.fenceClosed=true;continue}if(/^#\s*本应用自带的 Skills|^#\s*本应用 Memory/.test(t)){this.fenceClosed=true;continue}if(this.fenceClosed)continue;
 this.docLines.push(line);if(this.onLine)this.onLine(this.docText())}}
 end(){if(this.mode==="chat"){if(this.buf.trim())this.onChat(this.buf)}else{const rest=this.buf.replace(/\n?\s*```\s*$/,"");if(rest.trim())this.docLines.push(rest)}this.buf=""}
 docText(){return this.docLines.join("\n")}
