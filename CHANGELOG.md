@@ -2,6 +2,10 @@
 
 本项目采用语义化版本：**大模块/功能更新 → `v1.x`（如 v1.1）**；**小调整/修复 → `v1.x.y`（如 v1.0.1）**。
 
+## [v1.5.3] — Windows CLI 启动修复
+
+- **Windows 上「启动 Claude Code 失败：spawn ...\npm\claude ENOENT」**：npm 全局目录同时存在无扩展名 `claude`（bash 脚本）、`claude.cmd`、`claude.ps1`，此前 `findBin` 先命中无扩展名文件，Node `spawn` 在 Windows 无法执行 → ENOENT。现 Windows 下优先探测 `.cmd/.exe/.bat`、跳过无扩展名脚本，`spawnCli` 再兜底补 `.cmd` 后缀并以 `cmd` shell 启动；kimi/qwen/opencode 等所有 CLI 后端同受益
+
 ## [v1.5.2] — 增量改图协议 [[PATCH]]（不再整篇重写）
 
 ### 变更

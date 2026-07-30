@@ -23,10 +23,16 @@ function findBin(names, extra) {
   const pathEnv = (process.env.PATH || "").split(path.delimiter);
   const cands = [].concat(extra || []);
   for (const n of names) for (const d of pathEnv) cands.push(path.join(d, n));
-  const exts = process.platform === "win32" ? [".cmd", ".exe", ".bat", ".ps1"] : [];
+  const exts = process.platform === "win32" ? [".cmd", ".exe", ".bat"] : [];
   for (const c of cands) {
-    try { if (c && fs.existsSync(c)) return c; } catch (e) {}
-    for (const e of exts) { try { if (c && fs.existsSync(c + e)) return c + e; } catch (er) {} }
+    if (!c) continue;
+    for (const e of exts) { try { if (fs.existsSync(c + e)) return c + e; } catch (er) {} }
+    try {
+      if (fs.existsSync(c)) {
+        if (process.platform === "win32" && !/\.(cmd|exe|bat)$/i.test(c)) continue;
+        return c;
+      }
+    } catch (e) {}
   }
   return null;
 }
@@ -41,7 +47,11 @@ function detectClaudeBin() {
 // Windows 上 npm 全局 CLI 是 .cmd/.bat shim，必须经 cmd shell 启动
 function spawnCli(bin, args, opts) {
   const o = Object.assign({}, opts || {});
-  if (process.platform === "win32" && /\.(cmd|bat)$/i.test(String(bin))) o.shell = true;
+  if (process.platform === "win32") {
+    const b = String(bin);
+    if (!/\.(cmd|bat|exe)$/i.test(b)) { try { if (fs.existsSync(b + ".cmd")) bin = b + ".cmd"; } catch (e) {} }
+    if (/\.(cmd|bat)$/i.test(String(bin))) o.shell = true;
+  }
   return spawn(bin, args, o);
 }
 function httpModFor(u) { return u.protocol === "https:" ? require("https") : http; }
