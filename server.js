@@ -19,30 +19,102 @@ function readCliConfig() {
     return {};
   }
 }
+const IS_WIN = process.platform === "win32";
+// 首选顺序：.exe 最干净（可直接 spawn），其次 npm 生成的 .cmd。
+// .ps1 被排除——它无法被 CreateProcess 直接执行（需 powershell -File），
+// 而 npm 装的包一定同时有 .cmd，选它只会自找麻烦。
+const WIN_EXT_PREF = [".exe", ".cmd", ".bat", ".com"];
+function winExecExts() {
+  const pathext = String(process.env.PATHEXT || "").split(";")
+    .map((s) => s.trim().toLowerCase()).filter((s) => /^\.[a-z0-9]+$/.test(s));
+  const pool = pathext.length ? pathext : WIN_EXT_PREF.slice();
+  const ranked = WIN_EXT_PREF.filter((e) => pool.indexOf(e) >= 0);
+  for (const e of pool) if (e !== ".ps1" && ranked.indexOf(e) < 0) ranked.push(e);
+  return ranked.length ? ranked : WIN_EXT_PREF.slice();
+}
+function isFile(p) { try { return !!p && fs.statSync(p).isFile(); } catch (e) { return false; } }
+// 各平台包管理器惯用的全局 bin 目录，省得每个 backend 各自重复列一遍
+function commonBinDirs() {
+  const home = os.homedir();
+  if (!IS_WIN) {
+    return [path.join(home, ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"];
+  }
+  const appdata = process.env.APPDATA || path.join(home, "AppData", "Roaming");
+  const local = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
+  return [
+    path.join(appdata, "npm"),                     // npm -g
+    path.join(local, "npm"),
+    path.join(home, ".local", "bin"),              // pipx / uv
+    path.join(home, "scoop", "shims"),             // scoop
+    path.join(process.env.ChocolateyInstall || "C:\\ProgramData\\chocolatey", "bin"),
+    path.join(local, "Programs"),
+  ];
+}
+function binCandidates(names, extra) {
+  const out = [].concat(extra || []);
+  const dirs = String(process.env.PATH || "").split(path.delimiter)
+    .filter(Boolean).concat(commonBinDirs());
+  for (const n of names) for (const d of dirs) out.push(path.join(d, n));
+  return out.filter(Boolean);
+}
 function findBin(names, extra) {
-  const pathEnv = (process.env.PATH || "").split(path.delimiter);
-  const cands = [].concat(extra || []);
-  for (const n of names) for (const d of pathEnv) cands.push(path.join(d, n));
-  const exts = process.platform === "win32" ? [".cmd", ".exe", ".bat", ".ps1"] : [];
+  const cands = binCandidates(names, extra);
+  if (!IS_WIN) {
+    for (const c of cands) if (isFile(c)) return c;
+    return null;
+  }
+  const exts = winExecExts();
+  // Windows 关键点：带扩展名的匹配必须"全局"扫完所有候选，再考虑无扩展名的。
+  // 逐个候选就地降级会出事——npm 全局目录里 `claude`（给 Git Bash 用的 sh shim）
+  // 和 `claude.cmd` 并存，靠前目录的无扩展 shim 会盖掉靠后目录里真正能跑的 .cmd。
   for (const c of cands) {
-    try { if (c && fs.existsSync(c)) return c; } catch (e) {}
-    for (const e of exts) { try { if (c && fs.existsSync(c + e)) return c + e; } catch (er) {} }
+    const low = c.toLowerCase();
+    if (exts.some((e) => low.endsWith(e)) && isFile(c)) return c;
+    for (const e of exts) if (isFile(c + e)) return c + e;
+  }
+  // 无扩展名文件在 Windows 上不可执行，命中它只会换来误导性的 spawn ENOENT，
+  // 所以判定为未安装，并把线索打出来而不是静默 NOT FOUND。
+  for (const c of cands) {
+    if (isFile(c)) { console.warn("[bridge] 忽略不可执行的 shim：" + c + "（同目录缺少 " + exts.slice(0, 3).join("/") + "）"); break; }
   }
   return null;
 }
-function detectClaudeBin() {
-  return findBin(["claude"], [
-    path.join(os.homedir(), ".local", "bin", "claude"),
-    "/opt/homebrew/bin/claude",
-    "/usr/local/bin/claude",
-    path.join(process.env.APPDATA || "", "npm", "claude"),
-  ]);
+function detectClaudeBin() { return findBin(["claude"], []); }
+// npm/pnpm 在 Windows 生成的 .cmd shim，末行就是 `"%dp0%\<真实入口>" %*`。
+// 把真实入口解析出来直接启动，即可完全绕开 cmd.exe：
+//   .exe → 直接 spawn；.js/.cjs/.mjs → process.execPath 带参启动。
+// 两种都是数组式 argv，多行提示词、引号、& | > 全部原样送达。
+function resolveWinShim(binPath) {
+  let txt; try { txt = fs.readFileSync(binPath, "utf8"); } catch (e) { return null; }
+  const re = /"%(?:~)?dp0%\\?([^"]+?\.(?:exe|c?js|mjs))"/gi;
+  let m, last = null;
+  while ((m = re.exec(txt))) last = m[1];
+  if (!last) return null;
+  const target = path.resolve(path.dirname(binPath), last.replace(/[\\/]+/g, path.sep));
+  if (!isFile(target)) return null;
+  return /\.exe$/i.test(target) ? { cmd: target, pre: [] } : { cmd: process.execPath, pre: [target] };
 }
-// Windows 上 npm 全局 CLI 是 .cmd/.bat shim，必须经 cmd shell 启动
+function quoteWinArg(a) {
+  const s = String(a);
+  return '"' + s.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, "$1$1") + '"';
+}
+// Windows 上 .cmd/.bat 不能直接 spawn（Node 18.20+/20.12+ 起已禁止），但也不该用
+// shell:true —— 那样 bin 和 args 只是被裸拼接，提示词里的空格/引号/& | > 会被 cmd
+// 当语法解析，换行更会直接截断命令行（既丢内容，也是注入面）。
+// 优先走 node + JS 入口：argv 按数组原样传递，多行提示词完全安全。
 function spawnCli(bin, args, opts) {
   const o = Object.assign({}, opts || {});
-  if (process.platform === "win32" && /\.(cmd|bat)$/i.test(String(bin))) o.shell = true;
-  return spawn(bin, args, o);
+  const b = String(bin);
+  const list = (args || []).map((a) => String(a == null ? "" : a));
+  if (IS_WIN && /\.(cmd|bat)$/i.test(b)) {
+    const real = resolveWinShim(b);
+    if (real) return spawn(real.cmd, real.pre.concat(list), o);
+    // 兜底：非 npm 结构的 shim 只能过 cmd.exe，逐参数加引号以尽量少受伤
+    const line = [b].concat(list).map(quoteWinArg).join(" ");
+    o.windowsVerbatimArguments = true;
+    return spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", '"' + line + '"'], o);
+  }
+  return spawn(b, list, o);
 }
 function httpModFor(u) { return u.protocol === "https:" ? require("https") : http; }
 function defaultPortFor(u) { return u.port || (u.protocol === "https:" ? 443 : 80); }
@@ -341,26 +413,34 @@ function cliVersion(bin) {
   });
 }
 const CLI_SPECS = [
-  { id: "claude", names: ["claude"], extra: [path.join(os.homedir(), ".local", "bin", "claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude", path.join(process.env.APPDATA || "", "npm", "claude")], prompt: ["-p"], sys: ["--system-prompt"], flags: ["--verbose"], out: ["--output-format", "stream-json"], label: "Claude Code" },
-  { id: "kimi", names: ["kimi"], extra: [path.join(os.homedir(), ".kimi-code", "bin", "kimi"), path.join(process.env.APPDATA || "", "npm", "kimi")], prompt: ["-p"], sys: [], out: ["--output-format", "stream-json"], label: "Kimi Code" },
-  { id: "qwen", names: ["qwen"], extra: ["/opt/homebrew/bin/qwen", "/usr/local/bin/qwen", path.join(process.env.APPDATA || "", "npm", "qwen")], prompt: ["-p"], sys: ["--system-prompt"], out: [], label: "Qwen Code" },
-  { id: "opencode", names: ["opencode"], extra: [path.join(os.homedir(), ".opencode", "bin", "opencode"), path.join(process.env.APPDATA || "", "npm", "opencode")], prompt: ["run"], sys: [], out: [], label: "OpenCode" },
+  // extra 只列各 CLI 的私有安装路径；npm/scoop/choco/homebrew 等标准全局 bin
+  // 目录由 commonBinDirs() 统一负责，不必逐个 backend 重复
+  { id: "claude", names: ["claude"], extra: [], prompt: ["-p"], sys: ["--system-prompt"], flags: ["--verbose"], out: ["--output-format", "stream-json"], label: "Claude Code" },
+  { id: "kimi", names: ["kimi"], extra: [path.join(os.homedir(), ".kimi-code", "bin", "kimi")], prompt: ["-p"], sys: [], out: ["--output-format", "stream-json"], label: "Kimi Code" },
+  { id: "qwen", names: ["qwen"], extra: [], prompt: ["-p"], sys: ["--system-prompt"], out: [], label: "Qwen Code" },
+  { id: "opencode", names: ["opencode"], extra: [path.join(os.homedir(), ".opencode", "bin", "opencode")], prompt: ["run"], sys: [], out: [], label: "OpenCode" },
 ];
 function detectClis() {
   return CLI_SPECS.map((sp) => { const bin = findBin(sp.names, sp.extra); return { id: sp.id, label: sp.label, bin, version: null }; }).filter((x) => x.bin);
 }
-function parseCliLine(line, onText) {
+// st 用于跨行记录"本轮是否已经产出过正文"。CLI（如 claude --output-format
+// stream-json）会先发 assistant/delta 事件，最后再发一个 result 事件重复同样的
+// 全文；两者都往外写就会让每条回复在页面上出现两遍。result 只作兜底。
+function parseCliLine(line, onText, st) {
   if (!line || !line.trim()) return;
-  let o; try { o = JSON.parse(line); } catch (e) { onText(line + "\n"); return; }
-  const collect = (v) => { if (typeof v === "string") onText(v); else if (Array.isArray(v)) v.forEach((x) => { if (typeof x === "string") onText(x); else if (x && typeof x.text === "string") onText(x.text); }); };
+  const s = st || {};
+  const emit = (x) => { if (x) { s.streamed = true; onText(x); } };
+  let o; try { o = JSON.parse(line); } catch (e) { emit(line + "\n"); return; }
+  const collect = (v) => { if (typeof v === "string") emit(v); else if (Array.isArray(v)) v.forEach((x) => { if (typeof x === "string") emit(x); else if (x && typeof x.text === "string") emit(x.text); }); };
   if (o.role === "assistant" && "content" in o) { collect(o.content); return; }
   const t = o.type;
-  if (t === "stream_event" && o.event) { const ev = o.event; if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "text_delta" && ev.delta.text) onText(ev.delta.text); return; }
-  if (t === "content_block_delta" && o.delta && o.delta.text) { onText(o.delta.text); return; }
-  if (t === "assistant" && o.message && o.message.content) { const txt = (o.message.content || []).filter((c) => c && c.type === "text").map((c) => c.text || "").join(""); if (txt) onText(txt); return; }
+  if (t === "stream_event" && o.event) { const ev = o.event; if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "text_delta" && ev.delta.text) emit(ev.delta.text); return; }
+  if (t === "content_block_delta" && o.delta && o.delta.text) { emit(o.delta.text); return; }
+  if (t === "assistant" && o.message && o.message.content) { const txt = (o.message.content || []).filter((c) => c && c.type === "text").map((c) => c.text || "").join(""); if (txt) emit(txt); return; }
   if (t === "message" && "content" in o) { collect(o.content); return; }
-  if (t === "text" && typeof o.text === "string") { onText(o.text); return; }
-  if (t === "result" && typeof o.result === "string") { onText(o.result); return; }
+  if (t === "text" && typeof o.text === "string") { emit(o.text); return; }
+  // result 是本轮全文汇总：只有在流式事件一个字都没给出时才用，否则重复
+  if (t === "result" && typeof o.result === "string") { if (!s.streamed) emit(o.result); return; }
 }
 function runCliChat(spec, promptText, systemText, write) {
   const args = [];
@@ -374,11 +454,12 @@ function runCliChat(spec, promptText, systemText, write) {
   console.log("[runCliChat] spawn", bin, JSON.stringify(argv));
   const child = spawnCli(String(bin), argv, { stdio: ["ignore", "pipe", "pipe"] });
   let buf = "";
+  const st = {};   // 本轮解析状态：是否已产出正文（供 result 兜底判断）
   child.stdout.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => { buf += chunk; let i; while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); parseCliLine(line, (t) => write({ text: t })); } });
+  child.stdout.on("data", (chunk) => { buf += chunk; let i; while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); parseCliLine(line, (t) => write({ text: t }), st); } });
   let err = ""; child.stderr.setEncoding("utf8"); child.stderr.on("data", (d) => (err += d));
   child.on("error", (e) => write({ error: "启动 " + spec.label + " 失败：" + e.message }));
-  child.on("close", (code) => { if (buf.trim()) parseCliLine(buf, (t) => write({ text: t })); if (code && code !== 0) write({ error: spec.label + " 退出码 " + code + (err ? "：" + err.slice(0, 300) : "") }); write({ done: true }); });
+  child.on("close", (code) => { if (buf.trim()) parseCliLine(buf, (t) => write({ text: t }), st); if (code && code !== 0) write({ error: spec.label + " 退出码 " + code + (err ? "：" + err.slice(0, 300) : "") }); write({ done: true }); });
   return child;
 }
 async function handleChat(req, res) {
