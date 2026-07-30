@@ -9,12 +9,13 @@ const MEMORY = path.join(DATA, "memory");
 const MEM_NOTES = path.join(MEMORY, "notes");
 const MEM_GROUPS = path.join(MEMORY, "groups");
 const CACHE = path.join(DATA, "cache");
+const TRASH = path.join(DATA, "trash");
 const GROUPS_IDX = path.join(DATA, "groups.md");
 const CONFIG = path.join(DATA, "config.json");
 const UNGROUPED = "未分组";
 
 function ensure() {
-  for (const d of [DATA, NOTES, MEMORY, MEM_NOTES, MEM_GROUPS, CACHE]) fs.mkdirSync(d, { recursive: true });
+  for (const d of [DATA, NOTES, MEMORY, MEM_NOTES, MEM_GROUPS, CACHE, TRASH]) fs.mkdirSync(d, { recursive: true });
   if (!fs.existsSync(CONFIG)) fs.writeFileSync(CONFIG, JSON.stringify({ memoryScope: "note", registries: ["https://github.com/anthropics/skills"], disabledSkills: [] }, null, 2));
 }
 function ensureGroupDir(g) { const dir = g === UNGROUPED ? NOTES : path.join(NOTES, sanitize(g)); fs.mkdirSync(dir, { recursive: true }); return dir; }
@@ -182,4 +183,47 @@ function collectHttp(baseUrl, key, model, messages) {
 function cacheGet(k) { try { return JSON.parse(fs.readFileSync(path.join(CACHE, sanitize(k) + ".json"), "utf8")); } catch (e) { return null; } }
 function cacheSet(k, v) { ensure(); try { fs.writeFileSync(path.join(CACHE, sanitize(k) + ".json"), JSON.stringify(v)); } catch (e) {} }
 
-module.exports = { ensure, readCfg, writeCfg, loadData, syncData, revealDir, readNoteMem, writeNoteMem, setGroupIndexLine, memoryForQuery, buildSystem, collectCli, collectHttp, cacheGet, cacheSet, DATA };
+function notesMtime() {
+  ensure(); let max = 0;
+  const walk = (dir) => { let ents; try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+    for (const e of ents) { const fp = path.join(dir, e.name);
+      if (e.isDirectory()) walk(fp);
+      else if (e.name.endsWith(".md")) { try { const st = fs.statSync(fp); if (st.mtimeMs > max) max = st.mtimeMs; } catch (er) {} } } };
+  walk(NOTES);
+  try { const st = fs.statSync(GROUPS_IDX); if (st.mtimeMs > max) max = st.mtimeMs; } catch (e) {}
+  return { mtime: max };
+}
+
+
+function trashNote(d) {
+  ensure();
+  const fp = path.join(TRASH, sanitize(d.id) + ".md");
+  fs.writeFileSync(fp, serializeNote(d));
+  if (Array.isArray(d.chat)) { try { fs.writeFileSync(fp.replace(/\.md$/, ".chat.json"), JSON.stringify(d.chat)); } catch (e) {} }
+}
+function trashInfo() {
+  ensure(); let count = 0, size = 0;
+  let ents; try { ents = fs.readdirSync(TRASH); } catch (e) { return { count: 0, size: 0, items: [] }; }
+  const items = [];
+  for (const f of ents) {
+    const fp = path.join(TRASH, f);
+    try { const st = fs.statSync(fp); size += st.size; } catch (e) {}
+    if (f.endsWith(".md")) { count++; const n = parseNoteFile(fp); if (n) items.push({ id: n.id, title: n.title, group: n.group, updatedAt: n.updatedAt }); }
+  }
+  return { count, size, items };
+}
+function emptyTrash() {
+  ensure(); let ents; try { ents = fs.readdirSync(TRASH); } catch (e) { return { ok: true }; }
+  for (const f of ents) { try { fs.unlinkSync(path.join(TRASH, f)); } catch (e) {} }
+  return { ok: true };
+}
+function restoreNote(id) {
+  ensure();
+  const fp = path.join(TRASH, sanitize(id) + ".md");
+  if (!fs.existsSync(fp)) return null;
+  const n = parseNoteFile(fp);
+  try { fs.unlinkSync(fp); } catch (e) {}
+  try { fs.unlinkSync(fp.replace(/\.md$/, ".chat.json")); } catch (e) {}
+  return n;
+}
+module.exports = { ensure, readCfg, writeCfg, loadData, syncData, notesMtime, revealDir, trashNote, trashInfo, emptyTrash, restoreNote, readNoteMem, writeNoteMem, setGroupIndexLine, memoryForQuery, buildSystem, collectCli, collectHttp, cacheGet, cacheSet, DATA };

@@ -567,8 +567,13 @@ const server = http.createServer(async (req, res) => {
     }
   }
   if (req.method === "GET" && url === "/api/data") { sendJson(res, 200, DS.loadData()); return; }
+  if (req.method === "GET" && url === "/api/data/mtime") { sendJson(res, 200, DS.notesMtime()); return; }
   if (req.method === "POST" && url === "/api/data/sync") { try { const b = JSON.parse(await readBody(req)); sendJson(res, 200, DS.syncData(b)); } catch (e) { sendJson(res, 500, { error: e.message }); } return; }
   if (req.method === "GET" && url === "/api/data/reveal") { const q = new URL(req.url, "http://x").searchParams; sendJson(res, 200, { path: DS.revealDir(q.get("p") || null) }); return; }
+  if (req.method === "GET" && url === "/api/trash") { sendJson(res, 200, DS.trashInfo()); return; }
+  if (req.method === "POST" && url === "/api/trash/put") { try { const b = JSON.parse(await readBody(req)); DS.trashNote(b); sendJson(res, 200, { ok: true }); } catch (e) { sendJson(res, 500, { error: e.message }); } return; }
+  if (req.method === "POST" && url === "/api/trash/empty") { sendJson(res, 200, DS.emptyTrash()); return; }
+  if (req.method === "POST" && url === "/api/trash/restore") { try { const b = JSON.parse(await readBody(req)); const n = DS.restoreNote(b.id); if (!n) { sendJson(res, 404, { error: "not found" }); return; } n.group = "未分组"; sendJson(res, 200, { ok: true, doc: n }); } catch (e) { sendJson(res, 500, { error: e.message }); } return; }
   if (req.method === "POST" && url === "/api/memory/update") {
     try {
       const b = JSON.parse(await readBody(req)); const noteId = b.noteId, group = b.group || "未分组", title = b.title || "", md = b.markdown || "";
