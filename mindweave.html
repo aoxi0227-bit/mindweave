@@ -603,7 +603,7 @@ const TEMPLATES=[
 {id:"novel",name:"小说大纲",icon:"feather",color:"#C0603C",group:"小说",desc:"世界观 · 人物线 · 章节大纲 · 伏笔，结构化连载。",md:"# 雾港孤灯\n\n- 世界观\n  - 1998 年，东南沿海的雾港小镇\n  - 灯塔照亮的走私航线\n- 人物线\n  - 沈潮生 · 私家侦探\n  - 顾兰因 · 委托人\n- 章节大纲\n  - 第一章 雾夜来电\n- 伏笔\n  - 灯塔的第三盏灯\n",sugg:["把人物线展开","给第二章加一场码头追踪戏","再埋三个伏笔"]}
 ];
 const DEFAULT_GROUPS=["头脑风暴","读书笔记","小说","未分组"];
-const SYSPROMPT="你是思维梳理助手，页面上与用户对话，旁边是一份用 Markdown（# 标题 + 两级空格缩进的 - 列表层级）表达的思维导图文档。\n规则：\n1. 正常用中文与用户讨论；当讨论产生了应沉淀到文档的内容，或用户要求修改文档时，在回复末尾另起一行输出 [[DOC]]，随后输出修改后的完整 Markdown。\n2. [[DOC]] 之后只输出 Markdown 本身，不要代码块标记、不要解释。\n3. 未提及的既有内容保持原样；层级最多不超过 5 层。\n4. 不需要修改文档时，不要输出 [[DOC]]。";
+const SYSPROMPT="你是思维梳理助手，页面上与用户对话，旁边是一份用 Markdown（# 标题 + 两级空格缩进的 - 列表层级）表达的思维导图文档。\n规则：\n1. 正常用中文与用户讨论。\n2. 局部改动（展开、新增、修改或删除个别主题）——绝大多数情况——在回复末尾另起一行输出 [[PATCH]]，随后只输出涉及的主题（- 列表，两级空格缩进）：每个顶层条目按标题对应一个既有主题，其子列表即该主题改后的完整子列表（保留的子节点也要写出，省略即删除）；条目对应的主题不存在时整体挂到根下。不要重复输出未涉及的主题。\n3. 仅当重建整篇或改动覆盖大部分内容时，才输出 [[DOC]] + 修改后的完整 Markdown。\n4. [[PATCH]]/[[DOC]] 之后只输出内容本身，不要代码块标记、不要解释；层级最多不超过 5 层。\n5. 不需要修改文档时，不要输出 [[PATCH]] 或 [[DOC]]。";
 
 let state={docs:[],groups:[],settings:{mode:"mock",baseURL:"",apiKey:"",model:"",backend:"",memoryScope:"global"},ui:{dark:false,sideOpen:true,rightOpen:true,rightSplit:46,mapTheme:"clay",hintSeen:false,collapsedGroups:{}},activeId:null,customThemes:[]};
 let tree=null, selectedId=null, collapsedNodes=new Set(), streamCtl=null;
@@ -1074,21 +1074,33 @@ function renderSugg(){const d=activeDoc();const t=TEMPLATES.find(x=>x.id===(d?d.
 $("#suggRow").innerHTML="";t.sugg.forEach(s=>{const b=document.createElement("button");b.className="sugg";b.textContent=s;b.onclick=()=>{$("#chatInput").value=s;sendChat()};$("#suggRow").appendChild(b)})}
 
 class DocStream{
-constructor(o){this.buf="";this.mode="chat";this.docLines=[];this.fence=false;this.fenceClosed=false;this.hasDoc=false;this.onChat=o.onChat;this.onLine=o.onLine;this.onDoc=o.onDoc}
+constructor(o){this.buf="";this.mode="chat";this.docLines=[];this.patchLines=[];this.fence=false;this.fenceClosed=false;this.hasDoc=false;this.hasPatch=false;this.onChat=o.onChat;this.onLine=o.onLine;this.onDoc=o.onDoc;this.onPatch=o.onPatch;this.onPatchLine=o.onPatchLine}
 push(c){this.buf+=c;this.drain()}
 drain(){
 if(this.mode==="chat"){
-const i=this.buf.indexOf("[[DOC]]");
-if(i>=0){if(i>0)this.onChat(this.buf.slice(0,i));this.buf=this.buf.slice(i+7);this.mode="doc";this.hasDoc=true;if(this.onDoc)this.onDoc();
+const di=this.buf.indexOf("[[DOC]]"),pi=this.buf.indexOf("[[PATCH]]");
+let kind=null,at=-1,klen=0;
+if(di>=0&&(pi<0||di<pi)){kind="doc";at=di;klen=7}else if(pi>=0){kind="patch";at=pi;klen=9}
+if(kind){if(at>0)this.onChat(this.buf.slice(0,at));this.buf=this.buf.slice(at+klen);this.mode=kind;
+if(kind==="doc"){this.hasDoc=true;if(this.onDoc)this.onDoc()}else{this.hasPatch=true;if(this.onPatch)this.onPatch()}
 const m=this.buf.match(/^\s*```[^\n]*\n/);if(m){this.buf=this.buf.slice(m[0].length);this.fence=true}}
-else{if(this.buf.length>8){this.onChat(this.buf.slice(0,-8));this.buf=this.buf.slice(-8)}return}}
+else{if(this.buf.length>9){this.onChat(this.buf.slice(0,-9));this.buf=this.buf.slice(-9)}return}}
 let nl;while((nl=this.buf.indexOf("\n"))>=0){let line=this.buf.slice(0,nl);this.buf=this.buf.slice(nl+1);
-const t=line.trim();if(this.fence&&/^```/.test(t)){this.fenceClosed=true;continue}if(/^#\s*本应用自带的 Skills|^#\s*本应用 Memory/.test(t)){this.fenceClosed=true;continue}if(this.fenceClosed)continue;
-this.docLines.push(line);if(this.onLine)this.onLine(this.docText())}}
-end(){if(this.mode==="chat"){if(this.buf.trim())this.onChat(this.buf)}else{const rest=this.buf.replace(/\n?\s*```\s*$/,"");if(rest.trim())this.docLines.push(rest)}this.buf=""}
+const t=line.trim();if(this.fence&&/^```/.test(t)){this.fenceClosed=true;continue}if(this.mode==="doc"&&/^#\s*本应用自带的 Skills|^#\s*本应用 Memory/.test(t)){this.fenceClosed=true;continue}if(this.fenceClosed)continue;
+if(this.mode==="doc"){this.docLines.push(line);if(this.onLine)this.onLine(this.docText())}
+else{this.patchLines.push(line);if(this.onPatchLine)this.onPatchLine(line)}}}
+end(){if(this.mode==="chat"){if(this.buf.trim())this.onChat(this.buf)}else{const rest=this.buf.replace(/\n?\s*```\s*$/,"");if(rest.trim()){if(this.mode==="doc")this.docLines.push(rest);else this.patchLines.push(rest)}}this.buf=""}
+patchText(){return this.patchLines.join("\n")}
 docText(){return this.docLines.join("\n")}
 }
 
+function parsePatchItems(lines){const roots=[],stack=[];for(const raw of lines){if(!raw.trim())continue;const m=raw.match(/^(\s*)[-·]\s+(.*)$/);if(!m)continue;const lv=Math.floor(m[1].replace(/\t/g,"  ").length/2);const it={title:m[2].trim(),children:[]};while(stack.length>lv)stack.pop();if(!stack.length)roots.push(it);else stack[stack.length-1].children.push(it);stack.push(it)}return roots}
+function buildPatchNodes(items,depth){return items.map(it=>({id:"",title:it.title,children:buildPatchNodes(it.children,depth+1),depth}))}
+function applyPatch(lines){const items=parsePatchItems(lines);if(!items.length)return{count:0,names:[]};pushUndo();const names=[];let count=0;
+for(const it of items){let found=null;(function w(n){if(found)return;if(n.title===it.title){found=n;return}(n.children||[]).forEach(w)})(tree);
+if(found){if(it.children.length)found.children=buildPatchNodes(it.children,found.depth+1);names.push(it.title)}
+else{tree.children.push(buildPatchNodes([it],1)[0]);names.push(it.title+"（新）")}count++}
+assignIds(tree);commitTree(true);const md=treeToMd(tree);const d=activeDoc();if(d)d.markdown=md;$("#mdEditor").value=md;return{count,names}}
 let generating=false;
 $("#chatForm").addEventListener("submit",e=>{e.preventDefault();sendChat()});
 $("#chatInput").addEventListener("input",e=>{const ta=e.target;ta.style.height="auto";ta.style.height=Math.min(ta.scrollHeight,140)+"px"});
@@ -1114,7 +1126,9 @@ onChat:t=>{chatText+=t;if(body.querySelector(".typing"))body.innerHTML="";if(!si
 const lastP=body.lastElementChild;
 const frag=mdToHtml(chatText);body.innerHTML=frag;caret()},
 onDoc:()=>setStatus("正在绘制导图…"),
-onLine:md=>{tree=mdToTree(md);$("#mdEditor").value=md;renderMap(true);const n=sink.docLines.filter(l=>l.trim()).length;if(n)setStatus("已绘制 "+n+" 个主题")}
+onPatch:()=>{if(body.querySelector(".typing"))body.innerHTML="";setStatus("正在修改导图…")},
+onLine:md=>{tree=mdToTree(md);$("#mdEditor").value=md;renderMap(true);const n=sink.docLines.filter(l=>l.trim()).length;if(n)setStatus("已绘制 "+n+" 个主题")},
+onPatchLine:line=>{const first=sink.patchLines.find(l=>l.trim());if(first){const m=first.match(/^\s*[-·]\s+(.*)$/);setStatus(m?"正在修改「"+m[1].trim()+"」…":"正在修改导图…")}else setStatus("正在修改导图…")}
 });
 let done;const finished=new Promise(res=>done=res);
 if(state.settings.mode==="cli"){
@@ -1141,8 +1155,9 @@ body.querySelector(".caret")?.remove();status.remove();
 const docN=sink.hasDoc?countNodes(tree):0;
 if(sink.hasDoc){const md=sink.docText();tree=mdToTree(md);d.markdown=md;$("#mdEditor").value=md;renderMap(false);
 ai.insertAdjacentHTML("beforeend",'<span class="docchip">'+icon("zap","icon sm")+"已更新导图 · "+docN+" 个节点</span>")}
-if(!body.innerHTML.trim()&&!sink.hasDoc)body.innerHTML="<p>……</p>";
-d.chat.push({role:"assistant",text:chatText.trim()||"（已更新文档）",doc:sink.hasDoc?d.markdown:null});if(sink.hasDoc&&state.settings.mode!=="mock"){const _d=activeDoc();if(_d)fetch("/api/memory/update",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({noteId:_d.id,group:_d.group||"未分组",title:_d.title,markdown:_d.markdown})}).catch(()=>{})}
+else if(sink.hasPatch){const rep=applyPatch(sink.patchLines);if(rep.count)ai.insertAdjacentHTML("beforeend",'<span class="docchip">'+icon("zap","icon sm")+"已修改 · "+rep.names.slice(0,3).join("、")+(rep.names.length>3?" 等 "+rep.names.length+" 处":"")+"</span>")}
+if(!body.innerHTML.trim()&&!sink.hasDoc&&!sink.hasPatch)body.innerHTML="<p>……</p>";
+d.chat.push({role:"assistant",text:chatText.trim()||"（已更新文档）",doc:sink.hasDoc?d.markdown:null,patch:sink.hasPatch?sink.patchText():null});if((sink.hasDoc||sink.hasPatch)&&state.settings.mode!=="mock"){const _d=activeDoc();if(_d)fetch("/api/memory/update",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({noteId:_d.id,group:_d.group||"未分组",title:_d.title,markdown:_d.markdown})}).catch(()=>{})}
 persist();updateMdStats();setGenerating(false);streamCtl=null;markDirty();renderDocListSoon();
 }
 function setGenerating(v){generating=v;$("#sendBtn").disabled=v;$("#stopBtn").classList.toggle("show",v);$("#chatInput").disabled=v}
@@ -1165,7 +1180,7 @@ function wireTopUpdate(){const b=$("#topUpdateBtn");if(!b)return;b.innerHTML=ico
 async function cliChat(messages,onDelta,signal,onStage){const _ad=activeDoc();const res=await fetch("/api/chat",{method:"POST",signal,headers:{"Content-Type":"application/json"},body:JSON.stringify({messages,backend:state.settings.backend||undefined,noteId:_ad?_ad.id:null,docTitle:_ad?_ad.title:"",docGroup:_ad?_ad.group||"":""})});if(!res.ok){let m="HTTP "+res.status;try{const j=await res.json();m=j.error||m}catch(e){}throw new Error(m)}const rd=res.body.getReader(),dec=new TextDecoder();let buf="";while(true){const {done:dn,value}=await rd.read();if(dn)break;buf+=dec.decode(value,{stream:true});let i;while((i=buf.indexOf("\n"))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line.startsWith("data:"))continue;const data=line.slice(5).trim();if(!data)continue;try{const o=JSON.parse(data);if(o.label){const mc=$("#modelChipText");if(mc)mc.textContent=o.label}if(o.stage&&onStage)onStage(o.stage);if(o.text)onDelta(o.text);if(o.error)throw new Error(o.error)}catch(e){if(e.message&&e.message!=="Unexpected end of JSON input")throw e}}}}
 function buildApiMessages(d,userText){
 const msgs=[{role:"system",content:SYSPROMPT+"\n\n当前文档：\n"+d.markdown}];
-(d.chat||[]).slice(0,-1).slice(-12).forEach(m=>{if(m.role==="user")msgs.push({role:"user",content:m.text});else msgs.push({role:"assistant",content:m.doc?m.text+"\n[[DOC]]\n"+m.doc:m.text})});
+(d.chat||[]).slice(0,-1).slice(-12).forEach(m=>{if(m.role==="user")msgs.push({role:"user",content:m.text});else msgs.push({role:"assistant",content:m.patch?m.text+"\n[[PATCH]]\n"+m.patch:(m.doc?m.text+"\n[[DOC]]\n"+m.doc:m.text)})});
 msgs.push({role:"user",content:userText});return msgs}
 async function apiStream(messages,onDelta,signal){
 const base=(state.settings.baseURL||"").replace(/\/+$/,"");
