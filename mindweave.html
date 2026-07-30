@@ -695,7 +695,7 @@ if(!m){
 const g=svgEl("g",{class:"node","data-id":n.id},gN);
 const inner=svgEl("g",{class:"inner"},g);
 m={g,inner,rect:null,text:null,dot:null,badge:null};
-g.addEventListener("pointerdown",e=>{e.stopPropagation();if(e.button!==0||e.target.closest(".collapse-badge"))return;e.preventDefault();if(drag)cancelDrag();const nid=g.getAttribute("data-id");const ids=(selSet.has(nid)&&selSet.size>1)?[...selSet]:[nid];drag={ids,sx:e.clientX,sy:e.clientY,moved:false,cand:null,ghost:[],slot:null,link:null,backup:null,pristine:null,tops:null}});
+g.addEventListener("pointerdown",e=>{e.stopPropagation();if(e.button!==0||e.target.closest(".collapse-badge"))return;e.preventDefault();if(nodeEditor.classList.contains("editing"))commitEdit();if(drag)cancelDrag();const nid=g.getAttribute("data-id");const ids=(selSet.has(nid)&&selSet.size>1)?[...selSet]:[nid];drag={ids,sx:e.clientX,sy:e.clientY,moved:false,cand:null,ghost:[],slot:null,link:null,backup:null,pristine:null,tops:null}});
 g.addEventListener("click",e=>{e.stopPropagation();const nid=g.getAttribute("data-id");if(e.ctrlKey||e.metaKey){if(selSet.has(nid)){selSet.delete(nid);m.g.classList.remove("multi-sel")}else{selSet.add(nid);m.g.classList.add("multi-sel")}if(selSet.size)toast("已选 "+selSet.size+" 个主题");return}if(!selSet.has(nid))clearSel();selectNode(nid)});
 g.addEventListener("dblclick",e=>{e.stopPropagation();startNodeEdit(g.getAttribute("data-id"))});
 gEls.set(n.id,m);
@@ -861,7 +861,8 @@ $("#zoomOutBtn").onclick=()=>zoomBy(.8);
 $("#fitBtn").onclick=()=>{applyFit();};
 $("#zoomOutBtn").innerHTML=icon("minus");$("#zoomInBtn").innerHTML=icon("plus");$("#fitBtn").innerHTML=icon("fit");
 
-function selectNode(id){selectedId=id;gEls.forEach(m=>{m.g.classList.remove("sel");m.g.classList.remove("editing")});if(id&&gEls.has(id)){gEls.get(id).g.classList.add("sel");armEditor(id)}else{nodeEditor.classList.remove("armed","editing");nodeEditor.style.display="none";editingId=null}placeToolbar()}
+function disarmEditor(){nodeEditor.classList.remove("armed","editing");nodeEditor.style.display="none";if(editingId&&gEls.has(editingId))gEls.get(editingId).g.classList.remove("editing");editingId=null;try{if(document.activeElement===nodeEditor)nodeEditor.blur()}catch(e){}}
+function selectNode(id){selectedId=id;if(nodeEditor.classList.contains("editing")&&editingId&&editingId!==id)commitEdit();gEls.forEach(m=>m.g.classList.remove("sel"));if(id&&gEls.has(id)){gEls.get(id).g.classList.add("sel");if(editingId===id)gEls.get(id).g.classList.add("editing");else disarmEditor()}else disarmEditor();placeToolbar()}
 function armEditor(id){const m=gEls.get(id);if(!m)return;editingId=id;m.g.classList.remove("editing");nodeEditor.classList.add("armed");nodeEditor.classList.remove("editing");nodeEditor.value="";repositionEditor();if(document.activeElement!==nodeEditor)nodeEditor.focus();try{nodeEditor.selectionStart=nodeEditor.selectionEnd=0}catch(e){}}
 function beginEditing(){if(!nodeEditor.classList.contains("armed"))return;nodeEditor.classList.remove("armed");nodeEditor.classList.add("editing");const _en=editingId?findNode(editingId):null;if(_en)nodeEditor.dataset.orig=_en.title;if(selectedId&&gEls.has(selectedId))gEls.get(selectedId).g.classList.add("editing")}
 function placeToolbar(){
@@ -894,15 +895,15 @@ function toggleCollapse(id){pushUndo();if(id==="r"&&!tree.children.length)return
 
 const nodeEditor=$("#nodeEditorInput");let editingId=null;
 function startNodeEdit(id){const m=gEls.get(id);if(!m)return;editingId=id;const n=m.meta;
-beginEditing();if(selectedId&&gEls.has(selectedId))gEls.get(selectedId).g.classList.add("editing");
+nodeEditor.classList.remove("armed");nodeEditor.classList.add("editing");gEls.forEach(x=>x.g.classList.remove("editing"));if(selectedId&&gEls.has(selectedId))gEls.get(selectedId).g.classList.add("editing");
 const _orig=n.title;nodeEditor.dataset.orig=_orig;const _ph=(_orig==="新主题"||_orig==="");if(_ph){nodeEditor.value="";nodeEditor.style.textAlign="center";repositionEditor();nodeEditor.focus();try{nodeEditor.setSelectionRange(0,0)}catch(e){}}else{nodeEditor.value=_orig;nodeEditor.style.textAlign="left";repositionEditor();nodeEditor.focus();try{nodeEditor.setSelectionRange(_orig.length,_orig.length)}catch(e){}}
 }
 nodeEditor.addEventListener("input",()=>{if(!nodeEditor.classList.contains("editing"))return;const ph=(nodeEditor.dataset.orig==="新主题"||nodeEditor.dataset.orig==="");nodeEditor.style.textAlign=(ph&&!nodeEditor.value)?"center":"left"});
 nodeEditor.addEventListener("keydown",e=>{const armed=nodeEditor.classList.contains("armed");if(e.key==="Tab"||e.key==="Shift")e.preventDefault();if(armed&&(e.metaKey||e.ctrlKey))return;e.stopPropagation();if(armed){const _act=actionFor(e)||(selSet.size>1&&(e.key==="Delete"||e.key==="Backspace")?"deleteNode":null);if(_act){e.preventDefault();dispatchAction(_act);return}if(!e.metaKey&&!e.ctrlKey&&!e.altKey&&e.key.length===1){beginEditing();return}}if(e.key==="Tab"&&!e.shiftKey){e.preventDefault();const _id=editingId;commitEdit();if(_id&&findNode(_id))addChild(_id)}else if(e.key==="Enter"){e.preventDefault();commitEdit()}else if(e.key==="Escape"){e.preventDefault();cancelEdit()}});
 nodeEditor.addEventListener("compositionstart",()=>{beginEditing()});
 nodeEditor.addEventListener("blur",()=>{if(nodeEditor.classList.contains("armed")){if(selectedId&&gEls.has(selectedId)){nodeEditor.value="";try{nodeEditor.selectionStart=nodeEditor.selectionEnd=0}catch(e){}}else{nodeEditor.style.display="none";nodeEditor.classList.remove("armed","editing");editingId=null}return}commitEdit()});
-function commitEdit(){if(!editingId)return;const eid=editingId;const n=findNode(eid);const v=nodeEditor.value.trim();if(n){const _o=nodeEditor.dataset.orig||"";const finalT=v||(_o||"新主题");if(finalT!==n.title){pushUndo();n.title=finalT;commitTree(false)}}if(selectedId&&gEls.has(selectedId)){armEditor(selectedId)}else{nodeEditor.style.display="none";nodeEditor.classList.remove("armed","editing");editingId=null}}
-function cancelEdit(){if(selectedId&&gEls.has(selectedId)){armEditor(selectedId)}else{nodeEditor.style.display="none";nodeEditor.classList.remove("armed","editing");editingId=null}}
+function commitEdit(){if(!editingId)return;const eid=editingId;const n=findNode(eid);const v=nodeEditor.value.trim();if(n){const _o=nodeEditor.dataset.orig||"";const finalT=v||(_o||"新主题");if(finalT!==n.title){pushUndo();n.title=finalT;commitTree(false)}}disarmEditor()}
+function cancelEdit(){disarmEditor()}
 
 let orderList=[];
 let undoStack=[],redoStack=[],createHist=[];
