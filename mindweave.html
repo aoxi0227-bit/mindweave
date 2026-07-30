@@ -230,6 +230,8 @@ var(--bg)}
 .typing{display:inline-flex;gap:4px;padding:4px 0}
 .typing i{width:5px;height:5px;border-radius:50%;background:var(--ink-3);animation:tp 1s infinite}
 .typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
+.ai-status{display:flex;align-items:center;gap:7px;margin-top:7px;font-size:11px;color:var(--ink-3);animation:rise .22s ease;letter-spacing:.02em}
+.ai-st-dot{width:10px;height:10px;border-radius:50%;border:1.5px solid var(--line-2);border-top-color:var(--clay);animation:updRot .7s linear infinite;flex:none}
 @keyframes tp{30%{transform:translateY(-4px);opacity:.5}}
 #suggRow{display:flex;gap:6px;padding:6px 12px 2px;flex-wrap:wrap}
 .sugg{font-size:11.5px;color:var(--ink-2);border:1px solid var(--line);background:var(--card);border-radius:999px;padding:4px 11px;transition:all var(--t)}
@@ -1071,12 +1073,12 @@ function renderSugg(){const d=activeDoc();const t=TEMPLATES.find(x=>x.id===(d?d.
 $("#suggRow").innerHTML="";t.sugg.forEach(s=>{const b=document.createElement("button");b.className="sugg";b.textContent=s;b.onclick=()=>{$("#chatInput").value=s;sendChat()};$("#suggRow").appendChild(b)})}
 
 class DocStream{
-constructor(o){this.buf="";this.mode="chat";this.docLines=[];this.fence=false;this.fenceClosed=false;this.hasDoc=false;this.onChat=o.onChat;this.onLine=o.onLine}
+constructor(o){this.buf="";this.mode="chat";this.docLines=[];this.fence=false;this.fenceClosed=false;this.hasDoc=false;this.onChat=o.onChat;this.onLine=o.onLine;this.onDoc=o.onDoc}
 push(c){this.buf+=c;this.drain()}
 drain(){
 if(this.mode==="chat"){
 const i=this.buf.indexOf("[[DOC]]");
-if(i>=0){if(i>0)this.onChat(this.buf.slice(0,i));this.buf=this.buf.slice(i+7);this.mode="doc";this.hasDoc=true;
+if(i>=0){if(i>0)this.onChat(this.buf.slice(0,i));this.buf=this.buf.slice(i+7);this.mode="doc";this.hasDoc=true;if(this.onDoc)this.onDoc();
 const m=this.buf.match(/^\s*```[^\n]*\n/);if(m){this.buf=this.buf.slice(m[0].length);this.fence=true}}
 else{if(this.buf.length>8){this.onChat(this.buf.slice(0,-8));this.buf=this.buf.slice(-8)}return}}
 let nl;while((nl=this.buf.indexOf("\n"))>=0){let line=this.buf.slice(0,nl);this.buf=this.buf.slice(nl+1);
@@ -1101,20 +1103,23 @@ d.chat=d.chat||[];d.chat.push({role:"user",text});persist();
 appendMsg("user",text);
 const ai=appendMsg("assistant","");
 const body=ai.querySelector(".body");body.innerHTML='<span class="typing"><i></i><i></i><i></i></span>';
+const status=document.createElement("div");status.className="ai-status";status.innerHTML='<span class="ai-st-dot"></span><span class="ai-st-txt">思考中…</span>';ai.appendChild(status);
+const setStatus=t=>{status.style.display="";const x=status.querySelector(".ai-st-txt");if(x)x.textContent=t};
 setGenerating(true);
 let chatText="";
 const caret=()=>{const c=body.querySelector(".caret");if(!c){body.insertAdjacentHTML("beforeend",'<span class="caret"></span>')}scrollChat()};
 const sink=new DocStream({
-onChat:t=>{chatText+=t;if(body.querySelector(".typing"))body.innerHTML="";body.querySelector(".caret")?.remove();
+onChat:t=>{chatText+=t;if(body.querySelector(".typing"))body.innerHTML="";if(!sink.hasDoc)status.style.display="none";body.querySelector(".caret")?.remove();
 const lastP=body.lastElementChild;
 const frag=mdToHtml(chatText);body.innerHTML=frag;caret()},
-onLine:md=>{tree=mdToTree(md);$("#mdEditor").value=md;renderMap(true)}
+onDoc:()=>setStatus("正在绘制导图…"),
+onLine:md=>{tree=mdToTree(md);$("#mdEditor").value=md;renderMap(true);const n=sink.docLines.filter(l=>l.trim()).length;if(n)setStatus("已绘制 "+n+" 个主题")}
 });
 let done;const finished=new Promise(res=>done=res);
 if(state.settings.mode==="cli"){
-if(!srvHealth||!(srvBackends||[]).some(b=>b.ready)){body.innerHTML='<p style="color:var(--err)">本地桥接未连接，或未检测到可用 CLI。请先在项目目录运行 <code style="font-family:var(--mono)">node server.js</code>，再打开它打印的地址。</p>';done();setGenerating(false);streamCtl=null;return}
+if(!srvHealth||!(srvBackends||[]).some(b=>b.ready)){body.innerHTML='<p style="color:var(--err)">本地桥接未连接，或未检测到可用 CLI。请先在项目目录运行 <code style="font-family:var(--mono)">node server.js</code>，再打开它打印的地址。</p>';status.remove();done();setGenerating(false);streamCtl=null;return}
 const ctl=new AbortController();streamCtl=()=>ctl.abort();
-try{await cliChat(buildApiMessages(d,text),chunk=>sink.push(chunk),ctl.signal);sink.end()}catch(err){sink.end();if(!chatText)body.innerHTML='<p style="color:var(--err)">桥接请求失败：'+esc(err.message||String(err))+'</p>'}
+try{await cliChat(buildApiMessages(d,text),chunk=>sink.push(chunk),ctl.signal,st=>{if(st==="thinking")setStatus("深度思考中…")});sink.end()}catch(err){sink.end();status.remove();if(!chatText)body.innerHTML='<p style="color:var(--err)">桥接请求失败：'+esc(err.message||String(err))+'</p>'}
 done();
 }else if(state.settings.mode==="mock"){
 const cancel=mockReply(text,d,chunk=>sink.push(chunk),()=>{sink.end();done()});
@@ -1125,13 +1130,13 @@ try{
 await apiStream(buildApiMessages(d,text),chunk=>sink.push(chunk),ctl.signal);
 sink.end();
 }catch(err){
-sink.end();
+sink.end();status.remove();
 if(!chatText)body.innerHTML='<p style="color:var(--err)">请求失败：'+esc(err.message||String(err))+'</p><p style="color:var(--ink-2);font-size:13px">请检查设置中的 Base URL / Key，或切回 Mock 演示模式。</p>';
 }
 done();
 }
 await finished;
-body.querySelector(".caret")?.remove();
+body.querySelector(".caret")?.remove();status.remove();
 const docN=sink.hasDoc?countNodes(tree):0;
 if(sink.hasDoc){const md=sink.docText();tree=mdToTree(md);d.markdown=md;$("#mdEditor").value=md;renderMap(false);
 ai.insertAdjacentHTML("beforeend",'<span class="docchip">'+icon("zap","icon sm")+"已更新导图 · "+docN+" 个节点</span>")}
@@ -1156,7 +1161,7 @@ function updStateHTML(){if(!_updInfo)return'<div class="upd-state"><span class="
 function renderUpdPop(){if(!_updPop)return;_updPop.innerHTML='<div class="upd-head"><span class="upd-title">软件更新</span><span class="upd-cur">'+(_updInfo&&_updInfo.current?'v'+esc(_updInfo.current):'…')+'</span></div><div class="upd-body">'+updStateHTML()+'</div><div class="upd-foot"><span>热更新 · 自动重启 · 保留用户数据</span><button class="upd-recheck">重新检查</button></div>';const rc=_updPop.querySelector(".upd-recheck");rc.onclick=async()=>{rc.textContent="检查中…";await checkUpdate(true);if(!_updPop)return;renderUpdPop()};const cta=_updPop.querySelector(".upd-cta");if(cta)cta.onclick=async()=>{cta.disabled=true;cta.innerHTML='<span class="upd-spin" style="border-color:rgba(255,255,255,.35);border-top-color:#fff"></span>下载并覆盖新包…';try{const r=await fetch("/api/update/apply",{method:"POST"});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||("HTTP "+r.status));if(j.already){toast("已是最新版本");await checkUpdate(true);renderUpdPop();return}_updPop.querySelector(".upd-body").innerHTML='<div class="upd-state"><span class="upd-spin"></span><div><div class="upd-s1">已更新到 v'+esc(j.version)+'</div><div class="upd-s2">后台重启中，页面将自动刷新…</div></div></div>';const t0=Date.now();const poll=async()=>{try{const h=await fetch("/api/health?force=1",{cache:"no-store"});if(h.ok){const j2=await h.json();if(j2.version===j.version){location.reload();return}}}catch(e){}if(Date.now()-t0<30000)setTimeout(poll,1000);else location.reload()};setTimeout(poll,1500)}catch(e){cta.disabled=false;cta.textContent="立即更新";toast("更新失败："+e.message)}}}
 function openUpdPop(anchor){closeUpdPop();const pop=document.createElement("div");pop.className="upd-pop";_updPop=pop;document.body.appendChild(pop);const r=anchor.getBoundingClientRect();pop.style.top=(r.bottom+9)+"px";pop.style.left=Math.max(8,Math.min(r.right-302,window.innerWidth-310))+"px";renderUpdPop();const outside=ev=>{if(!pop.contains(ev.target)&&ev.target!==anchor)closeUpdPop()};pop._outside=outside;setTimeout(()=>document.addEventListener("mousedown",outside),0)}
 function wireTopUpdate(){const b=$("#topUpdateBtn");if(!b)return;b.innerHTML=icon("up","icon sm")+'<span class="upd-dot"></span>';b.onclick=e=>{e.stopPropagation();if(_updPop){closeUpdPop();return}openUpdPop(b)}}
-async function cliChat(messages,onDelta,signal){const _ad=activeDoc();const res=await fetch("/api/chat",{method:"POST",signal,headers:{"Content-Type":"application/json"},body:JSON.stringify({messages,backend:state.settings.backend||undefined,noteId:_ad?_ad.id:null,docTitle:_ad?_ad.title:"",docGroup:_ad?_ad.group||"":""})});if(!res.ok){let m="HTTP "+res.status;try{const j=await res.json();m=j.error||m}catch(e){}throw new Error(m)}const rd=res.body.getReader(),dec=new TextDecoder();let buf="";while(true){const {done:dn,value}=await rd.read();if(dn)break;buf+=dec.decode(value,{stream:true});let i;while((i=buf.indexOf("\n"))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line.startsWith("data:"))continue;const data=line.slice(5).trim();if(!data)continue;try{const o=JSON.parse(data);if(o.label){const mc=$("#modelChipText");if(mc)mc.textContent=o.label}if(o.text)onDelta(o.text);if(o.error)throw new Error(o.error)}catch(e){if(e.message&&e.message!=="Unexpected end of JSON input")throw e}}}}
+async function cliChat(messages,onDelta,signal,onStage){const _ad=activeDoc();const res=await fetch("/api/chat",{method:"POST",signal,headers:{"Content-Type":"application/json"},body:JSON.stringify({messages,backend:state.settings.backend||undefined,noteId:_ad?_ad.id:null,docTitle:_ad?_ad.title:"",docGroup:_ad?_ad.group||"":""})});if(!res.ok){let m="HTTP "+res.status;try{const j=await res.json();m=j.error||m}catch(e){}throw new Error(m)}const rd=res.body.getReader(),dec=new TextDecoder();let buf="";while(true){const {done:dn,value}=await rd.read();if(dn)break;buf+=dec.decode(value,{stream:true});let i;while((i=buf.indexOf("\n"))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line.startsWith("data:"))continue;const data=line.slice(5).trim();if(!data)continue;try{const o=JSON.parse(data);if(o.label){const mc=$("#modelChipText");if(mc)mc.textContent=o.label}if(o.stage&&onStage)onStage(o.stage);if(o.text)onDelta(o.text);if(o.error)throw new Error(o.error)}catch(e){if(e.message&&e.message!=="Unexpected end of JSON input")throw e}}}}
 function buildApiMessages(d,userText){
 const msgs=[{role:"system",content:SYSPROMPT+"\n\n当前文档：\n"+d.markdown}];
 (d.chat||[]).slice(0,-1).slice(-12).forEach(m=>{if(m.role==="user")msgs.push({role:"user",content:m.text});else msgs.push({role:"assistant",content:m.doc?m.text+"\n[[DOC]]\n"+m.doc:m.text})});

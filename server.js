@@ -284,6 +284,7 @@ async function handleChatHttp(req, res, payload, system, model) {
 
   let buf = "";
   let evt = "";
+  let sentThink = false;
   upstream.setEncoding("utf8");
   upstream.on("data", (chunk) => {
     buf += chunk;
@@ -299,7 +300,10 @@ async function handleChatHttp(req, res, payload, system, model) {
         if (!data) continue;
         try {
           const o = JSON.parse(data);
-          if (t === "content_block_delta" && o.delta && o.delta.type === "text_delta" && o.delta.text) {
+          if (!sentThink && ((t === "content_block_start" && o.content_block && o.content_block.type === "thinking") || (t === "content_block_delta" && o.delta && (o.delta.type === "thinking_delta" || o.delta.type === "signature_delta")))) {
+            sentThink = true;
+            write({ stage: "thinking" });
+          } else if (t === "content_block_delta" && o.delta && o.delta.type === "text_delta" && o.delta.text) {
             write({ text: o.delta.text });
           } else if (t === "message_stop") {
             write({ done: true });
@@ -349,13 +353,13 @@ const CLI_SPECS = [
 function detectClis() {
   return CLI_SPECS.map((sp) => { const bin = findBin(sp.names, sp.extra); return { id: sp.id, label: sp.label, bin, version: null }; }).filter((x) => x.bin);
 }
-function parseCliLine(line, onText) {
+function parseCliLine(line, onText, onStage) {
   if (!line || !line.trim()) return;
   let o; try { o = JSON.parse(line); } catch (e) { onText(line + "\n"); return; }
   const collect = (v) => { if (typeof v === "string") onText(v); else if (Array.isArray(v)) v.forEach((x) => { if (typeof x === "string") onText(x); else if (x && typeof x.text === "string") onText(x.text); }); };
   if (o.role === "assistant" && "content" in o) { collect(o.content); return; }
   const t = o.type;
-  if (t === "stream_event" && o.event) { const ev = o.event; if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "text_delta" && ev.delta.text) onText(ev.delta.text); return; }
+  if (t === "stream_event" && o.event) { const ev = o.event; if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "text_delta" && ev.delta.text) onText(ev.delta.text); else if (onStage && ((ev.type === "content_block_start" && ev.content_block && ev.content_block.type === "thinking") || (ev.type === "content_block_delta" && ev.delta && (ev.delta.type === "thinking_delta" || ev.delta.type === "signature_delta")))) onStage("thinking"); return; }
   if (t === "content_block_delta" && o.delta && o.delta.text) { onText(o.delta.text); return; }
   if (t === "assistant" && o.message && o.message.content) { const txt = (o.message.content || []).filter((c) => c && c.type === "text").map((c) => c.text || "").join(""); if (txt) onText(txt); return; }
   if (t === "message" && "content" in o) { collect(o.content); return; }
@@ -374,11 +378,13 @@ function runCliChat(spec, promptText, systemText, write) {
   console.log("[runCliChat] spawn", bin, JSON.stringify(argv));
   const child = spawnCli(String(bin), argv, { stdio: ["ignore", "pipe", "pipe"] });
   let buf = "";
+  let sentThink = false;
+  const stage = (s) => { if (!sentThink) { sentThink = true; write({ stage: s }); } };
   child.stdout.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => { buf += chunk; let i; while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); parseCliLine(line, (t) => write({ text: t })); } });
+  child.stdout.on("data", (chunk) => { buf += chunk; let i; while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); parseCliLine(line, (t) => write({ text: t }), stage); } });
   let err = ""; child.stderr.setEncoding("utf8"); child.stderr.on("data", (d) => (err += d));
   child.on("error", (e) => write({ error: "启动 " + spec.label + " 失败：" + e.message }));
-  child.on("close", (code) => { if (buf.trim()) parseCliLine(buf, (t) => write({ text: t })); if (code && code !== 0) write({ error: spec.label + " 退出码 " + code + (err ? "：" + err.slice(0, 300) : "") }); write({ done: true }); });
+  child.on("close", (code) => { if (buf.trim()) parseCliLine(buf, (t) => write({ text: t }), stage); if (code && code !== 0) write({ error: spec.label + " 退出码 " + code + (err ? "：" + err.slice(0, 300) : "") }); write({ done: true }); });
   return child;
 }
 async function handleChat(req, res) {
