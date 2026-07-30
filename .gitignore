@@ -11,3 +11,7 @@ dist/
 *.zip
 .mindweave/notes/
 .mindweave/groups.md
+.mindweave/trash/
+.mindweave/memory/
+.mindweave/cache/
+.mindweave/config.json
