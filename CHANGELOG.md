@@ -2,6 +2,23 @@
 
 本项目采用语义化版本：**大模块/功能更新 → `v1.x`（如 v1.1）**；**小调整/修复 → `v1.x.y`（如 v1.0.1）**。
 
+## [v1.5.1] — 修复 Windows 无法识别与启动本地 CLI
+
+Windows 上桥接始终报 `spawn ...\npm\claude ENOENT`，四个 backend（claude / kimi / qwen / opencode）全部受影响。根因是两处，都在 CLI 探测与启动层：
+
+### 探测：扩展名匹配顺序错误
+- npm 全局目录里同名文件有两份——`claude`（给 Git Bash / WSL 用的无扩展 sh 脚本）和 `claude.cmd`。Windows 的 `CreateProcess` 不做 PATHEXT 补全，前者根本无法执行
+- 原 `findBin` 按候选**逐个就地降级**（先试裸路径、再试加扩展名），于是靠前目录的 sh shim 会盖掉靠后目录里真正能跑的 `.cmd`。改为**全局两轮**：先扫完所有候选的带扩展名匹配，再考虑无扩展名
+- 扩展名改为读 `PATHEXT` 环境变量（缺失时回落 `.exe/.cmd/.bat/.com`），优先 `.exe`；排除 `.ps1`——它无法被 `CreateProcess` 直接执行
+- `fs.existsSync` 换成 `statSync().isFile()`，避免把同名目录当成可执行文件
+- 只找到不可执行的裸 shim 时，不再静默判定「未安装」，而是打印具体路径与缺失的扩展名
+- 新增 `commonBinDirs()` 统一收拢各平台标准全局 bin 目录（npm / scoop / chocolatey / pipx / homebrew），各 backend 的 `extra` 只保留自己的私有安装路径
+
+### 启动：`shell: true` 会破坏提示词
+- 原先对 `.cmd`/`.bat` 用 `shell: true`。该模式下 Node 把 bin 与 args **裸拼接**成一条命令行，提示词里的空格、引号、`& | > ^` 会被 cmd 当语法解析，**换行更会直接截断命令**——多行提示词必然丢内容，同时构成命令注入面（且触发 Node `DEP0190` 警告）
+- 改为解析 npm shim 末行的 `"%dp0%\<真实入口>" %*`，拿到真实目标后绕开 cmd.exe 直接启动：`.exe` 直接 spawn，`.js/.cjs/.mjs` 走 `process.execPath`。两者都是数组式 argv，多行提示词逐字节原样送达
+- 非 npm 结构的 shim 仍回落到 `cmd.exe /d /s /c`，但改为逐参数加引号，尽量减少损伤
+
 ## [v1.5] — 双向文件同步 + 回收站 + 顶栏热更新图标
 
 ### 双向文件同步
