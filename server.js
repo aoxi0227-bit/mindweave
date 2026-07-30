@@ -186,7 +186,8 @@ function serveStatic(req, res) {
       res.end("not found");
       return;
     }
-    res.writeHead(200, { "Content-Type": MIME[path.extname(fp).toLowerCase()] || "application/octet-stream" });
+    const ext = path.extname(fp).toLowerCase();
+    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": (ext === ".html" || ext === ".js") ? "no-store" : "public, max-age=3600" });
     res.end(data);
   });
 }
