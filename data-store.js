@@ -148,15 +148,28 @@ function collectCli(spec, prompt, system) {
     if (!spec || !spec.bin) { resolve(""); return; }
     const args = [];
     let promptText = prompt;
-    if (system && spec.sys && spec.sys.length) args.push(spec.sys[0], system);
-    else if (system) promptText = "[系统指令]\n" + system + "\n\n[任务]\n" + prompt;
-    args.push(spec.prompt[0], promptText);
+    const win = process.platform === "win32";
+    const useStdin = win && !!spec.stdinPrompt;
+    if (system) {
+      if (useStdin || win || !(spec.sys && spec.sys.length)) promptText = "[系统指令]\n" + system + "\n\n[任务]\n" + prompt;
+      else args.push(spec.sys[0], system);
+    }
+    if (useStdin) {
+      args.push(spec.prompt[0]);
+    } else {
+      if (win && promptText.length > 7500) promptText = promptText.slice(0, 7500) + "\n\n[内容过长，已截断]";
+      args.push(spec.prompt[0], promptText);
+    }
     if (spec.flags) for (const f of spec.flags) args.push(f);
     if (spec.out && spec.out.length) args.push(...spec.out);
-    // Windows 上 npm 全局 CLI 是 .cmd/.bat shim，必须经 cmd shell 启动
-    const spawnOpts = { stdio: ["ignore", "pipe", "pipe"] };
-    if (process.platform === "win32" && /\.(cmd|bat)$/i.test(String(spec.bin))) spawnOpts.shell = true;
+    // Windows 上 npm 全局 CLI 是 .cmd/.bat shim，必须经 cmd shell 启动；windowsHide 防止闪黑框
+    const spawnOpts = { stdio: [useStdin ? "pipe" : "ignore", "pipe", "pipe"] };
+    if (win) {
+      if (/\.(cmd|bat)$/i.test(String(spec.bin))) spawnOpts.shell = true;
+      spawnOpts.windowsHide = true;
+    }
     const child = spawn(spec.bin, args, spawnOpts);
+    if (useStdin) { try { child.stdin.write(promptText); child.stdin.end(); } catch (e) {} }
     let buf = "", out = "";
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (c) => { buf += c; let i; while ((i = buf.indexOf("\n")) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); parseCliLine(l, t => (out += t)); } });

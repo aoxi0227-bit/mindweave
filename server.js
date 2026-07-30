@@ -51,6 +51,7 @@ function spawnCli(bin, args, opts) {
     const b = String(bin);
     if (!/\.(cmd|bat|exe)$/i.test(b)) { try { if (fs.existsSync(b + ".cmd")) bin = b + ".cmd"; } catch (e) {} }
     if (/\.(cmd|bat)$/i.test(String(bin))) o.shell = true;
+    o.windowsHide = true;
   }
   return spawn(bin, args, o);
 }
@@ -355,8 +356,8 @@ function cliVersion(bin) {
   });
 }
 const CLI_SPECS = [
-  { id: "claude", names: ["claude"], extra: [path.join(os.homedir(), ".local", "bin", "claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude", path.join(process.env.APPDATA || "", "npm", "claude")], prompt: ["-p"], sys: ["--system-prompt"], flags: ["--verbose"], out: ["--output-format", "stream-json"], label: "Claude Code" },
-  { id: "kimi", names: ["kimi"], extra: [path.join(os.homedir(), ".kimi-code", "bin", "kimi"), path.join(process.env.APPDATA || "", "npm", "kimi")], prompt: ["-p"], sys: [], out: ["--output-format", "stream-json"], label: "Kimi Code" },
+  { id: "claude", names: ["claude"], extra: [path.join(os.homedir(), ".local", "bin", "claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude", path.join(process.env.APPDATA || "", "npm", "claude")], prompt: ["-p"], sys: ["--system-prompt"], flags: ["--verbose"], out: ["--output-format", "stream-json"], stdinPrompt: true, label: "Claude Code" },
+  { id: "kimi", names: ["kimi"], extra: [path.join(os.homedir(), ".kimi-code", "bin", "kimi"), path.join(process.env.APPDATA || "", "npm", "kimi")], prompt: ["-p"], sys: [], out: ["--output-format", "stream-json"], stdinPrompt: true, label: "Kimi Code" },
   { id: "qwen", names: ["qwen"], extra: ["/opt/homebrew/bin/qwen", "/usr/local/bin/qwen", path.join(process.env.APPDATA || "", "npm", "qwen")], prompt: ["-p"], sys: ["--system-prompt"], out: [], label: "Qwen Code" },
   { id: "opencode", names: ["opencode"], extra: [path.join(os.homedir(), ".opencode", "bin", "opencode"), path.join(process.env.APPDATA || "", "npm", "opencode")], prompt: ["run"], sys: [], out: [], label: "OpenCode" },
 ];
@@ -378,15 +379,29 @@ function parseCliLine(line, onText, onStage) {
 }
 function runCliChat(spec, promptText, systemText, write) {
   const args = [];
-  if (systemText && spec.sys && spec.sys.length) args.push(spec.sys[0], systemText);
-  args.push(spec.prompt[0], promptText);
-  if (spec.flags) for (const f of spec.flags) args.push(f);
-  if (spec.out && spec.out.length) args.push(...spec.out);
+  const win = process.platform === "win32";
+  const useStdin = win && !!spec.stdinPrompt;
+  let fullPrompt = promptText;
+  if (systemText) {
+    if (useStdin || win || !(spec.sys && spec.sys.length)) fullPrompt = "[系统指令]\n" + systemText + "\n\n[对话]\n" + promptText + "\n\n请按以上系统指令回答最后一条用户消息。";
+    else args.push(spec.sys[0], systemText);
+  }
+  if (useStdin) {
+    args.push(spec.prompt[0]);
+    if (spec.flags) for (const f of spec.flags) args.push(f);
+    if (spec.out && spec.out.length) args.push(...spec.out);
+  } else {
+    if (win && fullPrompt.length > 7500) fullPrompt = fullPrompt.slice(0, 7500) + "\n\n[内容过长，已截断]";
+    args.push(spec.prompt[0], fullPrompt);
+    if (spec.flags) for (const f of spec.flags) args.push(f);
+    if (spec.out && spec.out.length) args.push(...spec.out);
+  }
   let bin = spec.bin; if (!bin) { const sp = CLI_SPECS.find((x) => x.id === spec.id); bin = sp ? findBin(sp.names, sp.extra) : null; }
   if (!bin) { write({ error: "找不到 " + (spec.label || spec.id) + " 的可执行文件" }); return; }
   const argv = args.map((a) => String(a == null ? "" : a));
-  console.log("[runCliChat] spawn", bin, JSON.stringify(argv));
-  const child = spawnCli(String(bin), argv, { stdio: ["ignore", "pipe", "pipe"] });
+  console.log("[runCliChat] spawn", bin, JSON.stringify(argv.map((a) => a.length > 120 ? a.slice(0, 120) + "…(" + a.length + ")" : a)) + (useStdin ? " [stdin:" + fullPrompt.length + " chars]" : ""));
+  const child = spawnCli(String(bin), argv, { stdio: [useStdin ? "pipe" : "ignore", "pipe", "pipe"] });
+  if (useStdin) { try { child.stdin.write(fullPrompt); child.stdin.end(); } catch (e) {} }
   let buf = "";
   let sentThink = false;
   const stage = (s) => { if (!sentThink) { sentThink = true; write({ stage: s }); } };
@@ -509,8 +524,8 @@ async function updateApply() {
     const exDir = path.join(tmp, "ex");
     fs.mkdirSync(exDir);
     const r = process.platform === "win32"
-      ? spawnSync("tar", ["-xf", zipPath, "-C", exDir], { encoding: "utf8" })
-      : spawnSync("unzip", ["-o", "-q", zipPath, "-d", exDir], { encoding: "utf8" });
+      ? spawnSync("tar", ["-xf", zipPath, "-C", exDir], { encoding: "utf8", windowsHide: true })
+      : spawnSync("unzip", ["-o", "-q", zipPath, "-d", exDir], { encoding: "utf8", windowsHide: true });
     if (r.status !== 0) throw new Error("解压失败：" + String(r.stderr || (r.error && r.error.message) || "").slice(0, 200));
     const src = path.join(exDir, "mindweave");
     if (!fs.existsSync(path.join(src, "mindweave.html"))) throw new Error("包内容不完整");
