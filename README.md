@@ -35,6 +35,7 @@ node server.js          # 识别本机 AI CLI（claude/kimi/qwen/opencode）+ �
 | 三模式 AI | ① 本地 CLI 桥接（claude/kimi/qwen/opencode + 本地代理）② 自定义 OpenAI 兼容端点（含 Ollama/LM Studio 探测）③ Mock |
 | 主题 | 深/浅全局 + 4 套导图配色，**可新建/删除**自建主题 |
 | 文档管理 | 多文档/分组（增删改名）/搜索/4 模板/自动保存/导入导出 .md·SVG·PNG |
+| Agent API | 设置里一键生成 API Key，外部 Agent（Claude Code / Codex…）经 HTTP 直接读写笔记，3 秒实时同步 |
 | 布局 | 三栏可折叠，右栏上下可拖拽，状态持久化 |
 
 ## 接入本地 CLI 的原理
@@ -45,8 +46,19 @@ node server.js          # 识别本机 AI CLI（claude/kimi/qwen/opencode）+ �
 
 页面同源调用，无 CORS、无 Key、无 mock。详见 [技术文档.md](技术文档.md) §5。
 
+## Agent 接入（让外部 Agent 读写你的笔记）
+
+在「设置 → Agent API」生成 API Key，把 **[SKILL.md](SKILL.md)**（本地地址 `http://127.0.0.1:4317/skill.md`）交给你的 Agent（Claude Code / Codex / OpenCode / Cursor…），它就能列出、读取、新建、更新、删除你的笔记与分组——你在应用里的改动与 Agent 的改动 **3 秒内双向实时同步**。
+
+```bash
+curl -s http://127.0.0.1:4317/api/notes -H "Authorization: Bearer <你的Key>"
+```
+
+SKILL.md 里同时给了「不开后台」的兜底方案：直接读写 `.mindweave/notes/` 下的 Markdown 文件（同样自动同步）。
+
 ## 文档
 
+- [SKILL.md](SKILL.md) — **教 Agent 使用本应用**（API 端点、鉴权、导图 Markdown 格式、示例）
 - [技术文档.md](技术文档.md) — 架构、引擎算法、协议、数据流、桥接实现
 - [工程文档.md](工程文档.md) — 运行、配置、扩展、验证、部署、安全
 - [思维导图AI对话网页-工程规划文档.md](思维导图AI对话网页-工程规划文档.md) — 原始需求与决策记录

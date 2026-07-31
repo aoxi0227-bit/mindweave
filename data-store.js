@@ -1,5 +1,6 @@
 "use strict";
 const fs = require("fs");
+const crypto = require("crypto");
 const path = require("path");
 const os = require("os");
 const { spawn } = require("child_process");
@@ -240,4 +241,98 @@ function restoreNote(id) {
   try { fs.unlinkSync(fp.replace(/\.md$/, ".chat.json")); } catch (e) {}
   return n;
 }
-module.exports = { ensure, readCfg, writeCfg, loadData, syncData, notesMtime, revealDir, trashNote, trashInfo, emptyTrash, restoreNote, readNoteMem, writeNoteMem, setGroupIndexLine, memoryForQuery, buildSystem, collectCli, collectHttp, cacheGet, cacheSet, DATA };
+
+function writeNoteFile(d) {
+  ensure();
+  const np = notePath(d);
+  fs.writeFileSync(np, serializeNote(d));
+  if (Array.isArray(d.chat)) { try { fs.writeFileSync(np.replace(/\.md$/, ".chat.json"), JSON.stringify(d.chat)); } catch (e) {} }
+  return np;
+}
+function removeNoteFile(d) {
+  const np = notePath(d);
+  try { fs.unlinkSync(np); } catch (e) {}
+  try { fs.unlinkSync(np.replace(/\.md$/, ".chat.json")); } catch (e) {}
+}
+function apiListNotes() {
+  const data = loadData();
+  return { groups: data.groups, notes: data.docs.map((d) => ({ id: d.id, title: d.title, group: d.group, order: d.order || 0, createdAt: d.createdAt, updatedAt: d.updatedAt, template: d.template })) };
+}
+function apiGetNote(id) { return readAllNotes().find((n) => n.id === id) || null; }
+function ensureGroupRegistered(name) {
+  if (name === UNGROUPED) return;
+  const groups = readGroups();
+  if (!groups.find((g) => g.name === name)) { groups.push({ name }); writeGroups(groups); }
+}
+function apiCreateNote(input) {
+  ensure();
+  const src = input || {};
+  const now = Date.now();
+  const title = (src.title && String(src.title).trim()) || "未命名导图";
+  const group = (src.group && String(src.group).trim()) || UNGROUPED;
+  const d = { id: crypto.randomBytes(5).toString("hex"), title, group, order: 0, createdAt: now, updatedAt: now, template: "blank", markdown: typeof src.markdown === "string" && src.markdown.trim() ? src.markdown : "# " + title + "\n", chat: [] };
+  ensureGroupRegistered(group);
+  writeNoteFile(d);
+  return d;
+}
+function apiUpdateNote(id, patch) {
+  const cur = readAllNotes().find((n) => n.id === id);
+  if (!cur) return null;
+  const p = patch || {};
+  const old = Object.assign({}, cur);
+  if (p.title !== undefined) cur.title = String(p.title).trim() || cur.title;
+  if (p.markdown !== undefined) cur.markdown = String(p.markdown);
+  if (p.group !== undefined) cur.group = String(p.group).trim() || UNGROUPED;
+  cur.updatedAt = Date.now();
+  ensureGroupRegistered(cur.group);
+  if (cur.group !== old.group) removeNoteFile(old);
+  writeNoteFile(cur);
+  return cur;
+}
+function apiDeleteNote(id) {
+  const cur = readAllNotes().find((n) => n.id === id);
+  if (!cur) return false;
+  trashNote(cur);
+  removeNoteFile(cur);
+  return true;
+}
+function apiListGroups() {
+  const notes = readAllNotes();
+  return readGroups().map((g) => ({ name: g.name, count: notes.filter((n) => n.group === g.name).length }));
+}
+function apiCreateGroup(name) {
+  const n = String(name || "").trim();
+  if (!n) return { ok: false, error: "分组名不能为空" };
+  const groups = readGroups();
+  if (groups.find((g) => g.name === n)) return { ok: true, exists: true };
+  groups.push({ name: n });
+  writeGroups(groups);
+  ensureGroupDir(n);
+  return { ok: true };
+}
+function apiDeleteGroup(name) {
+  const n = String(name || "").trim();
+  if (!n || n === UNGROUPED) return { ok: false, error: "未分组不可删除" };
+  const groups = readGroups();
+  if (!groups.find((g) => g.name === n)) return { ok: false, error: "分组不存在" };
+  for (const note of readAllNotes().filter((x) => x.group === n)) {
+    const old = Object.assign({}, note);
+    note.group = UNGROUPED;
+    note.updatedAt = Date.now();
+    removeNoteFile(old);
+    writeNoteFile(note);
+  }
+  writeGroups(groups.filter((g) => g.name !== n));
+  return { ok: true };
+}
+function genApiKey() {
+  const cfg = readCfg();
+  cfg.apiKey = "mw-" + crypto.randomBytes(16).toString("hex");
+  writeCfg(cfg);
+  return cfg.apiKey;
+}
+function revokeApiKey() { const cfg = readCfg(); delete cfg.apiKey; writeCfg(cfg); }
+function getApiKey() { return readCfg().apiKey || null; }
+function checkApiKey(k) { const key = getApiKey(); return !!(key && k && k === key); }
+
+module.exports = { ensure, readCfg, writeCfg, loadData, syncData, notesMtime, revealDir, trashNote, trashInfo, emptyTrash, restoreNote, readNoteMem, writeNoteMem, setGroupIndexLine, memoryForQuery, buildSystem, collectCli, collectHttp, cacheGet, cacheSet, DATA, apiListNotes, apiGetNote, apiCreateNote, apiUpdateNote, apiDeleteNote, apiListGroups, apiCreateGroup, apiDeleteGroup, genApiKey, revokeApiKey, getApiKey, checkApiKey };

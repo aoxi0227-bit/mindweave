@@ -2,6 +2,17 @@
 
 本项目采用语义化版本：**大模块/功能更新 → `v1.x`（如 v1.1）**；**小调整/修复 → `v1.x.y`（如 v1.0.1）**。
 
+## [v1.6] — Agent API（外部 Agent 直接读写笔记）
+
+### 新增
+- **设置 → Agent API**：一键生成 / 重新生成 / 停用 API Key（`mw-` 前缀，随机 32 位十六进制），显示/隐藏/复制
+- **鉴权 CRUD 端点**（`X-API-Key` 或 `Authorization: Bearer`，未生成 Key 时整体 401）：
+  - `GET/POST /api/notes` · `GET/PUT/DELETE /api/notes/:id`
+  - `GET/POST /api/groups` · `DELETE /api/groups/:name`
+  - 新建笔记不存在的分组自动创建；删笔记进回收站；删分组文档移回未分组
+- **SKILL.md**（仓库根，`http://127.0.0.1:4317/skill.md` 直接可读）：教外部 Agent（Claude Code / Codex / OpenCode…）使用本应用——端点、鉴权、导图 Markdown 格式、curl 示例、先读后改的增量流程，以及「不开后台直接读写 `.mindweave/notes/` 文件」的兜底方案；README 已加入口
+- API 写入经既有 3s 文件轮询实时反映到网页；网页改动同理可被 Agent 轮询感知
+
 ## [v1.5.4] — Windows 命令行过长 + cmd 闪屏修复
 
 - **「The command line is too long」**：cmd.exe 命令行上限 8191 字符，系统提示（文档+Skills+历史）作为参数传入必爆。现 Windows 下 claude/kimi 改为 **stdin 传 prompt**（命令行只剩几个开关），系统提示折叠进正文；其余 CLI 兜底截断 7500 字符

@@ -9,7 +9,7 @@ BUILD="$DIR/dist/build"
 OUT="$DIR/dist"
 rm -rf "$BUILD"; mkdir -p "$BUILD" "$OUT"
 
-COMMON=(mindweave.html server.js data-store.js skills-memory.js README.md LICENSE CHANGELOG.md VERSION 工程文档.md 技术文档.md 跨平台说明.md)
+COMMON=(mindweave.html server.js data-store.js skills-memory.js README.md LICENSE CHANGELOG.md VERSION SKILL.md 工程文档.md 技术文档.md 跨平台说明.md)
 
 pack() {
   local platform="$1"; shift

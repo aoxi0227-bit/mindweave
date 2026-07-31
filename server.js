@@ -178,6 +178,7 @@ const MIME = {
   ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml",
   ".json": "application/json",
+  ".md": "text/markdown; charset=utf-8",
   ".png": "image/png",
   ".ico": "image/x-icon",
 };
@@ -536,6 +537,15 @@ async function updateApply() {
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
   }
 }
+function apiAuthed(req) {
+  const key = DS.getApiKey();
+  if (!key) return false;
+  const xk = req.headers["x-api-key"];
+  if (xk && xk === key) return true;
+  const a = req.headers["authorization"] || "";
+  const m = a.match(/^Bearer\s+(.+)$/i);
+  return !!(m && m[1] === key);
+}
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
@@ -622,6 +632,27 @@ const server = http.createServer(async (req, res) => {
       if (group && group !== "未分组") DS.setGroupIndexLine(group, noteId, title, oneline);
       sendJson(res, 200, { ok: true, oneline });
     } catch (e) { sendJson(res, 500, { error: e.message }); }
+    return;
+  }
+  if (req.method === "GET" && url === "/api/settings/apikey") { const k = DS.getApiKey(); sendJson(res, 200, { has: !!k, key: k || null }); return; }
+  if (req.method === "POST" && url === "/api/settings/apikey") { sendJson(res, 200, { key: DS.genApiKey() }); return; }
+  if (req.method === "DELETE" && url === "/api/settings/apikey") { DS.revokeApiKey(); sendJson(res, 200, { ok: true }); return; }
+  if (url === "/api/notes" || url.startsWith("/api/notes/") || url === "/api/groups" || url.startsWith("/api/groups/")) {
+    if (!apiAuthed(req)) { sendJson(res, 401, { error: "unauthorized：需要 API Key（在应用「设置 → Agent API」生成），经 X-API-Key 或 Authorization: Bearer 传递" }); return; }
+    if (url === "/api/notes" && req.method === "GET") { sendJson(res, 200, DS.apiListNotes()); return; }
+    if (url === "/api/notes" && req.method === "POST") { try { const b = JSON.parse(await readBody(req)); sendJson(res, 200, DS.apiCreateNote(b)); } catch (e) { sendJson(res, 400, { error: e.message }); } return; }
+    const mN = url.match(/^\/api\/notes\/([^/]+)$/);
+    if (mN) {
+      const id = decodeURIComponent(mN[1]);
+      if (req.method === "GET") { const n = DS.apiGetNote(id); if (!n) sendJson(res, 404, { error: "not found" }); else sendJson(res, 200, n); return; }
+      if (req.method === "PUT") { try { const b = JSON.parse(await readBody(req)); const n = DS.apiUpdateNote(id, b); if (!n) sendJson(res, 404, { error: "not found" }); else sendJson(res, 200, n); } catch (e) { sendJson(res, 400, { error: e.message }); } return; }
+      if (req.method === "DELETE") { if (DS.apiDeleteNote(id)) sendJson(res, 200, { ok: true }); else sendJson(res, 404, { error: "not found" }); return; }
+    }
+    if (url === "/api/groups" && req.method === "GET") { sendJson(res, 200, { groups: DS.apiListGroups() }); return; }
+    if (url === "/api/groups" && req.method === "POST") { try { const b = JSON.parse(await readBody(req)); sendJson(res, 200, DS.apiCreateGroup(b && b.name)); } catch (e) { sendJson(res, 400, { error: e.message }); } return; }
+    const mG = url.match(/^\/api\/groups\/([^/]+)$/);
+    if (mG && req.method === "DELETE") { sendJson(res, 200, DS.apiDeleteGroup(decodeURIComponent(mG[1]))); return; }
+    sendJson(res, 404, { error: "unknown api route" });
     return;
   }
   if (req.method === "GET" && url === "/api/update/check") {
