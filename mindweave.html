@@ -824,9 +824,17 @@ function dragCand(pt){
 let hit=null,hd=-1;
 for(const n of layoutNodes){if(pt.x>=n.bx&&pt.x<=n.bx+n.w&&pt.y>=n.by&&pt.y<=n.by+n.h&&(n.depth||0)>hd){hit=n;hd=n.depth||0}}
 if(hit)return{type:"into",id:hit.id,key:"into:"+hit.id};
-let leaf=null,ld=-1;
+let leaf=null,ld=-1,lb=1e9;
 for(const n of layoutNodes){if((n.visChildren||[]).length)continue;
-if(pt.x>n.bx+n.w&&pt.x<n.bx+n.w+HGAP+34&&pt.y>n.by-12&&pt.y<n.by+n.h+12&&(n.depth||0)>ld){leaf=n;ld=n.depth||0}}
+if(pt.x<=n.bx+n.w||pt.x>n.bx+n.w+HGAP*2.6)continue;
+let top=n.by-34,bot=n.by+n.h+34;
+const par=n._parent,sib=par&&par.visChildren?par.visChildren:null;
+if(sib&&sib.length>1){const i=n._idx;
+if(i>0)top=(sib[i-1].by+sib[i-1].h+n.by)/2;
+if(i<sib.length-1)bot=(n.by+n.h+sib[i+1].by)/2}
+if(pt.y<=top||pt.y>=bot)continue;
+const dy=Math.abs(pt.y-(n.by+n.h/2));
+if((n.depth||0)>ld||((n.depth||0)===ld&&dy<lb)){leaf=n;ld=n.depth||0;lb=dy}}
 if(leaf)return{type:"into",id:leaf.id,key:"into:"+leaf.id};
 let best=null,bd=1e9;
 for(const p of layoutNodes){const ch=p.visChildren||[];if(!ch.length)continue;
@@ -1432,12 +1440,24 @@ let _lastMtime=0,_pollBusy=false;
 function startFilePoll(){setInterval(async()=>{if(!serverOK||_pollBusy)return;_pollBusy=true;try{const r=await fetch("/api/data/mtime",{cache:"no-store"});if(!r.ok)return;const j=await r.json();if(j.mtime<=_lastMtime)return;
 if(document.activeElement===mdEditor||document.activeElement===nodeEditor)return;
 if(drag||marq||editingId||streamCtl||nodeEditor.classList.contains("editing")||nodeEditor.classList.contains("armed"))return;
-_lastMtime=j.mtime;const r2=await fetch("/api/data",{cache:"no-store"});if(!r2.ok)return;const data=await r2.json();if(!data.docs)return;const changed=JSON.stringify(data.docs.map(d=>d.id+":"+d.updatedAt))!==JSON.stringify(state.docs.map(d=>d.id+":"+d.updatedAt));if(!changed)return;
+if($("#saveStatus")&&$("#saveStatus").classList.contains("dirty"))return;
+const r2=await fetch("/api/data",{cache:"no-store"});if(!r2.ok)return;const data=await r2.json();if(!data.docs)return;
+_lastMtime=j.mtime;
+const changed=JSON.stringify(data.docs.map(d=>d.id+":"+d.updatedAt))!==JSON.stringify(state.docs.map(d=>d.id+":"+d.updatedAt));if(!changed)return;
 const prevActiveId=state.activeId;const prevDoc=state.docs.find(d=>d.id===prevActiveId);const prevStamp=prevDoc?prevDoc.updatedAt+"|"+prevDoc.markdown:"";
-state.docs=data.docs;if(data.groups&&data.groups.length)state.groups=data.groups;if(data.activeId&&state.docs.find(d=>d.id===data.activeId))state.activeId=data.activeId;else if(!state.docs.find(d=>d.id===state.activeId))state.activeId=state.docs[0]?state.docs[0].id:null;try{localStorage.setItem(LS.docs,JSON.stringify(state.docs));localStorage.setItem(LS.groups,JSON.stringify(state.groups));localStorage.setItem(LS.active,state.activeId)}catch(e){}renderDocList();
+const merged=mergeServerData(data);
+try{localStorage.setItem(LS.docs,JSON.stringify(state.docs));localStorage.setItem(LS.groups,JSON.stringify(state.groups));localStorage.setItem(LS.active,state.activeId)}catch(e){}renderDocList();
+if(!merged)return;
 const nd=activeDoc();const ndStamp=nd?nd.updatedAt+"|"+nd.markdown:"";
 if(state.activeId!==prevActiveId){loadDocToView()}
 else if(nd&&ndStamp!==prevStamp){mdEditor.value=nd.markdown;tree=mdToTree(nd.markdown);if(selectedId&&!findNode(selectedId))selectedId=null;renderMap(false);renderChat();renderSugg();updateMdStats();const t=new Date();$("#saveText").textContent="已同步 · "+String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0");$("#saveStatus").classList.remove("dirty")}}catch(e){}finally{_pollBusy=false}},3000)}
+function mergeServerData(data){let merged=false;
+for(const sd of data.docs){const ld=state.docs.find(d=>d.id===sd.id);
+if(!ld){state.docs.push(sd);merged=true}
+else if((sd.updatedAt||0)>(ld.updatedAt||0)){for(const k of Object.keys(sd))ld[k]=sd[k];merged=true}}
+if(data.groups&&data.groups.length)data.groups.forEach(g=>{if(!state.groups.find(x=>x.name===g.name)){state.groups.push(g);merged=true}});
+if(!state.docs.find(d=>d.id===state.activeId))state.activeId=(data.activeId&&state.docs.find(d=>d.id===data.activeId))?data.activeId:(state.docs[0]?state.docs[0].id:null);
+return merged}
 startFilePoll();
 
 
