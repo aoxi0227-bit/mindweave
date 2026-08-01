@@ -10,6 +10,20 @@ const PORT = parseInt(process.env.PORT || "4317", 10);
 const SETTINGS = path.join(os.homedir(), ".claude", "settings.json");
 const SK = require("./skills-memory"); SK.ensure();
 const DS = require("./data-store"); DS.ensure();
+const crypto = require("crypto");
+// 每次启动随机生成的一次性 UI 令牌：注入到页面，所有 /api 请求需携带，防止局域网/恶意网页调用本地接口
+const UI_TOKEN = (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex")).replace(/-/g, "");
+const HOST = process.env.MW_HOST || "0.0.0.0";
+function lanIPs() {
+  const out = [];
+  try {
+    const ifaces = os.networkInterfaces();
+    for (const k of Object.keys(ifaces)) for (const a of ifaces[k] || []) {
+      if (a.family === "IPv4" && !a.internal) out.push(a.address);
+    }
+  } catch (e) {}
+  return out;
+}
 
 function readCliConfig() {
   try {
@@ -199,6 +213,10 @@ function serveStatic(req, res) {
       return;
     }
     const ext = path.extname(fp).toLowerCase();
+    if (ext === ".html") {
+      let html = data.toString("utf8");
+      if (html.indexOf("__MW_UI_TOKEN__") >= 0) { html = html.split("__MW_UI_TOKEN__").join(UI_TOKEN); data = Buffer.from(html, "utf8"); }
+    }
     res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": (ext === ".html" || ext === ".js") ? "no-store" : "public, max-age=3600" });
     res.end(data);
   });
@@ -537,6 +555,12 @@ async function updateApply() {
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
   }
 }
+function uiAuthed(req) {
+  const t = req.headers["x-mw-token"];
+  return !!(t && t === UI_TOKEN);
+}
+// 无需鉴权的只读/探活接口（启动脚本、心跳、Ollama 探测等）
+const OPEN_API = new Set(["/api/health", "/api/health/", "/api/ping", "/api/hello", "/api/bye", "/api/backends"]);
 function apiAuthed(req) {
   const key = DS.getApiKey();
   if (!key) return false;
@@ -557,6 +581,10 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   const url = req.url.split("?")[0];
+  if (url.startsWith("/api/") && !OPEN_API.has(url) && !uiAuthed(req) && !apiAuthed(req)) {
+    sendJson(res, 401, { error: "unauthorized：缺少 UI 令牌或 API Key" });
+    return;
+  }
   if (req.method === "GET" && (url === "/api/health" || url === "/api/health/")) {
     sendJson(res, 200, await health(req.url.includes("force=1")));
     return;
@@ -714,11 +742,14 @@ server.on("error", (e) => {
   process.exit(1);
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   writePid(); armHb();
   health(true)
     .then((h) => {
-      console.log("[mindweave-bridge] listening on http://127.0.0.1:" + PORT);
+      console.log("[mindweave-bridge] listening on http://" + HOST + ":" + PORT);
+      const ips = lanIPs();
+      if (ips.length) console.log("[mindweave-bridge] 局域网访问：" + ips.map((ip) => "http://" + ip + ":" + PORT).join("  "));
+      console.log("[mindweave-bridge] 安全：所有 /api 写操作需页面令牌或 API Key，局域网设备无法绕过");
       console.log("[mindweave-bridge] claude CLI: " + (h.cli ? (h.cliVersion || "detected") + " @ " + h.cliPath : "NOT FOUND"));
       console.log("[mindweave-bridge] proxy: " + (h.proxyOk ? h.baseUrl + " · model=" + h.model : "UNREACHABLE"));
       console.log("[mindweave-bridge] ready=" + h.ready + " (open the URL above; mock is NOT used when ready)");
