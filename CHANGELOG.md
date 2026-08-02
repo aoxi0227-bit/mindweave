@@ -2,6 +2,17 @@
 
 本项目采用语义化版本：**大模块/功能更新 → `v1.x`（如 v1.1）**；**小调整/修复 → `v1.x.y`（如 v1.0.1）**。
 
+## [v1.8] — 三端正式打包（Windows exe 桌面版 / Ubuntu deb / macOS 图标修复）+ 中心主题联动笔记标题
+
+### 新增
+- **Windows 桌面版 exe**（`desktop/` Electron 壳）：解压双击 `MindWeave.exe` 即用——内嵌浏览器窗口 + 以 `ELECTRON_RUN_AS_NODE` 子进程跑本地桥接，无需安装 Node；单实例锁、服务器与窗口同生共死；exe 图标（7 尺寸）与版本信息由 resedit 纯 JS 注入，macOS/Linux 上可交叉打包、无需 wine（`desktop/build-desktop.sh`）
+- **Ubuntu 26.04 deb 包**：`sudo apt install ./mindweave_*.deb` 后应用菜单启动「思脉 MindWeave」（hicolor 图标集 + desktop 入口 + 图标缓存刷新钩子）；ar/tar 手工组装可复现（`build-deb.sh`）
+- **中心主题 → 笔记标题联动**：重命名中心主题（双击节点 / Markdown 一级标题 / AI 整篇生成 / 补丁）同步更新笔记标题、顶栏标题框与侧栏列表，撤销同步回退；默认占位名「中心主题」不覆盖已有标题；顶栏改名→笔记标题的反向操作不受影响
+- `build-release.sh` 一键产出全部制品：三端脚本 zip + Windows exe zip + deb
+
+### 修复
+- **macOS .app 图标不更新**：根因是 `CFBundleIconName` 指向 Assets.car 内的旧图标（替换 applet.icns 被无视）。现 `build-macos-app.sh` 自动从 logo.png 重建 Assets.car（actool）+ applet.icns（iconutil）双通道，附 ad-hoc 重签与 Launch Services 缓存刷新；NSWorkspace 验证 Spotlight/Finder/Dock 均显示新 logo
+
 ## [v1.7.1] — 拖拽吸附手感加固 + 同步竞态修复
 
 ### 修复

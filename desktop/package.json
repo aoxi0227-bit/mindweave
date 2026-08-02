@@ -1,0 +1,13 @@
+{
+  "name": "mindweave-desktop",
+  "productName": "MindWeave",
+  "version": "1.7.1",
+  "description": "思脉 MindWeave 桌面壳：内嵌本地桥接服务器 + 应用窗口",
+  "main": "main.js",
+  "private": true,
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-packager": "^17.1.2",
+    "resedit": "^2.0.2"
+  }
+}

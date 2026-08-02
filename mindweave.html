@@ -788,9 +788,11 @@ updateScrollbars();
 placeToolbar();
 }
 function rebuildMap(anim){clearHistory();tree=mdToTree(activeDoc()?activeDoc().markdown:"");renderMap(anim)}
-function commitTree(anim){const md=treeToMd(tree);const d=activeDoc();if(d){d.markdown=md;d.updatedAt=Date.now()}
+function commitTree(anim){const md=treeToMd(tree);const d=activeDoc();if(d){d.markdown=md;d.updatedAt=Date.now();syncNoteTitleFromTree()}
 $("#mdEditor").value=md;renderMap(anim);markDirty();renderDocListSoon()}
 const renderDocListSoon=debounce(renderDocList,800);
+function syncNoteTitleFromTree(){if(!tree)return;const d=activeDoc();if(!d)return;const t=(tree.title||"").trim();
+if(t&&t!=="中心主题"&&t!==d.title){d.title=t;if(document.activeElement!==$("#docTitleInput"))syncTitle();renderDocListSoon()}}
 
 const svg=$("#mapSvg"),wrapEl=$("#canvasWrap");
 let pan=null,marq=null,drag=null,selSet=new Set(),_marqDone=false;
@@ -972,7 +974,7 @@ let undoStack=[],redoStack=[],createHist=[];
 function pushUndo(){try{undoStack.push({md:activeDoc()?activeDoc().markdown:"",sel:selectedId});if(undoStack.length>200)undoStack.shift();redoStack.length=0}catch(e){}}
 function clearHistory(){undoStack.length=0;redoStack.length=0;createHist.length=0}
 function recordCreate(id){createHist.push(id);if(createHist.length>500)createHist.shift()}
-function doUndo(isRedo){const d=activeDoc();if(!d)return;const from=isRedo?redoStack:undoStack,to=isRedo?undoStack:redoStack;if(isRedo?!from.length:from.length<=1)return;const snap=from.pop();to.push({md:d.markdown,sel:selectedId});d.markdown=snap.md;$("#mdEditor").value=snap.md;tree=mdToTree(d.markdown);selectedId=snap.sel&&findNode(snap.sel)?snap.sel:null;renderMap(false);if(selectedId)gEls.has(selectedId)&&gEls.get(selectedId).g.classList.add("sel");markDirty();updateMdStats()}
+function doUndo(isRedo){const d=activeDoc();if(!d)return;const from=isRedo?redoStack:undoStack,to=isRedo?undoStack:redoStack;if(isRedo?!from.length:from.length<=1)return;const snap=from.pop();to.push({md:d.markdown,sel:selectedId});d.markdown=snap.md;$("#mdEditor").value=snap.md;tree=mdToTree(d.markdown);selectedId=snap.sel&&findNode(snap.sel)?snap.sel:null;renderMap(false);syncNoteTitleFromTree();if(selectedId)gEls.has(selectedId)&&gEls.get(selectedId).g.classList.add("sel");markDirty();updateMdStats()}
 const DEFAULT_KEYBINDS={addChild:"Tab",addSibling:"Enter",collapse:"Shift+Tab",deleteNode:"Backspace",navDown:"ArrowDown",navUp:"ArrowUp",navLeft:"ArrowLeft",navRight:"ArrowRight"};
 const KB_LABELS={addChild:"新建子主题",addSibling:"新建同级主题",collapse:"折叠 / 展开",deleteNode:"删除节点",navDown:"选中下一个",navUp:"选中上一个",navLeft:"选中父节点",navRight:"选中首个子节点"};
 let keybinds=Object.assign({},DEFAULT_KEYBINDS);
@@ -1000,7 +1002,7 @@ if(!selectedId||!gEls.has(selectedId))return;
 const _act=actionFor(e)||(selSet.size>1&&(e.key==="Delete"||e.key==="Backspace")?"deleteNode":null);if(_act){e.preventDefault();dispatchAction(_act);return}});
 
 const mdEditor=$("#mdEditor");
-const onEditorInput=debounce(()=>{const d=activeDoc();if(!d)return;d.markdown=mdEditor.value;d.updatedAt=Date.now();tree=mdToTree(d.markdown);renderMap(true);markDirty();renderDocListSoon()},280);
+const onEditorInput=debounce(()=>{const d=activeDoc();if(!d)return;d.markdown=mdEditor.value;d.updatedAt=Date.now();tree=mdToTree(d.markdown);syncNoteTitleFromTree();renderMap(true);markDirty();renderDocListSoon()},280);
 mdEditor.addEventListener("input",()=>{updateMdStats();onEditorInput()});
 mdEditor.addEventListener("keydown",e=>{if(e.key==="Tab"){e.preventDefault();const s=mdEditor.selectionStart,en=mdEditor.selectionEnd;mdEditor.value=mdEditor.value.slice(0,s)+"  "+mdEditor.value.slice(en);mdEditor.selectionStart=mdEditor.selectionEnd=s+2;mdEditor.dispatchEvent(new Event("input"))}});
 function updateMdStats(){const v=mdEditor.value;$("#mdStats").textContent=v.replace(/\s/g,"").length+" 字 · "+(v.split("\n").length)+" 行 · "+(tree?countNodes(tree):0)+" 节点"}
@@ -1219,7 +1221,7 @@ done();
 await finished;
 body.querySelector(".caret")?.remove();status.remove();
 const docN=sink.hasDoc?countNodes(tree):0;
-if(sink.hasDoc){const md=sink.docText();tree=mdToTree(md);d.markdown=md;$("#mdEditor").value=md;renderMap(false);
+if(sink.hasDoc){const md=sink.docText();tree=mdToTree(md);d.markdown=md;$("#mdEditor").value=md;renderMap(false);syncNoteTitleFromTree();
 ai.insertAdjacentHTML("beforeend",'<span class="docchip">'+icon("zap","icon sm")+"已更新导图 · "+docN+" 个节点</span>")}
 else if(sink.hasPatch){const rep=applyPatch(sink.patchLines);if(rep.count)ai.insertAdjacentHTML("beforeend",'<span class="docchip">'+icon("zap","icon sm")+"已修改 · "+rep.names.slice(0,3).join("、")+(rep.names.length>3?" 等 "+rep.names.length+" 处":"")+"</span>")}
 if(!body.innerHTML.trim()&&!sink.hasDoc&&!sink.hasPatch)body.innerHTML="<p>……</p>";

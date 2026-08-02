@@ -9,6 +9,11 @@ BUILD="$DIR/dist/build"
 OUT="$DIR/dist"
 rm -rf "$BUILD"; mkdir -p "$BUILD" "$OUT"
 
+# macOS：先重建 .app（注入 logo.png 图标）再打 macos 包
+if [ "$(uname)" = "Darwin" ] && command -v osacompile >/dev/null 2>&1; then
+  bash "$DIR/build-macos-app.sh" || echo "warn: .app 重建失败，沿用现有 .app"
+fi
+
 COMMON=(mindweave.html server.js data-store.js skills-memory.js README.md LICENSE CHANGELOG.md VERSION SKILL.md 工程文档.md 技术文档.md 跨平台说明.md)
 
 pack() {
@@ -44,4 +49,14 @@ pack windows start.bat start.ps1
 pack linux   start.sh
 
 rm -rf "$BUILD"
-echo "完成：v$VER 三端包已输出到 dist/"
+
+# Windows 桌面版（Electron exe，需首次联网下载 electron；失败不影响脚本包）
+bash "$DIR/desktop/build-desktop.sh" || echo "warn: Windows 桌面版（exe）构建失败——需要联网下载 Electron"
+
+# Linux deb（Ubuntu 26.04，arch all）
+bash "$DIR/build-deb.sh" || echo "warn: deb 构建失败"
+
+echo "完成：v$VER 全部制品已输出到 dist/"
+echo "  · mindweave-$VER-{macos,windows,linux}.zip   脚本版（需自备 Node）"
+echo "  · mindweave-$VER-windows-app.zip             Windows 桌面版 exe（双击即用）"
+echo "  · mindweave_${VER}_all.deb                   Ubuntu/Debian 安装包"
