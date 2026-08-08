@@ -640,6 +640,8 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url === "/api/data/mtime") { sendJson(res, 200, DS.notesMtime()); return; }
   if (req.method === "POST" && url === "/api/data/sync") { try { const b = JSON.parse(await readBody(req)); sendJson(res, 200, DS.syncData(b)); } catch (e) { sendJson(res, 500, { error: e.message }); } return; }
   if (req.method === "GET" && url === "/api/data/reveal") { const q = new URL(req.url, "http://x").searchParams; sendJson(res, 200, { path: DS.revealDir(q.get("p") || null) }); return; }
+  if (req.method === "POST" && url === "/api/data/dir") { try { const b = JSON.parse(await readBody(req)); sendJson(res, 200, DS.setDataDir(b && b.path)); } catch (e) { sendJson(res, 400, { error: e.message }); } return; }
+  if (req.method === "GET" && url === "/api/data/pick-dir") { sendJson(res, 200, await DS.pickDir()); return; }
   if (req.method === "GET" && url === "/api/trash") { sendJson(res, 200, DS.trashInfo()); return; }
   if (req.method === "POST" && url === "/api/trash/put") { try { const b = JSON.parse(await readBody(req)); DS.trashNote(b); sendJson(res, 200, { ok: true }); } catch (e) { sendJson(res, 500, { error: e.message }); } return; }
   if (req.method === "POST" && url === "/api/trash/empty") { sendJson(res, 200, DS.emptyTrash()); return; }

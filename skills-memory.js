@@ -2,20 +2,21 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const DATA = path.join(__dirname, ".mindweave");
-const SKILLS_DIR = path.join(DATA, "skills");
-const MEM_DIR = path.join(DATA, "memory");
-const CFG_PATH = path.join(DATA, "config.json");
-const GLOBAL_MEM = path.join(MEM_DIR, "global", "MEMORY.md");
-const NOTES_MEM = path.join(MEM_DIR, "notes");
+const DS = require("./data-store");
+const DATA = () => DS.getDataDir();
+const SKILLS_DIR = () => path.join(DATA(), "skills");
+const MEM_DIR = () => path.join(DATA(), "memory");
+const CFG_PATH = () => path.join(DATA(), "config.json");
+const GLOBAL_MEM = () => path.join(MEM_DIR(), "global", "MEMORY.md");
+const NOTES_MEM = () => path.join(MEM_DIR(), "notes");
 
 function ensure() {
-  for (const d of [SKILLS_DIR, path.join(MEM_DIR, "global"), NOTES_MEM]) fs.mkdirSync(d, { recursive: true });
-  if (!fs.existsSync(CFG_PATH)) fs.writeFileSync(CFG_PATH, JSON.stringify({ memoryScope: "global", registries: ["https://github.com/anthropics/skills"] }, null, 2));
-  if (!fs.existsSync(GLOBAL_MEM)) fs.writeFileSync(GLOBAL_MEM, "# 全局记忆（跨笔记）\n\n- 在此记录跨所有导图通用的偏好、约定、长期事实。\n- 行内可用 `- ` 列表；AI 会在每次对话前读取。\n");
+  for (const d of [SKILLS_DIR(), path.join(MEM_DIR(), "global"), NOTES_MEM()]) fs.mkdirSync(d, { recursive: true });
+  if (!fs.existsSync(CFG_PATH())) fs.writeFileSync(CFG_PATH(), JSON.stringify({ memoryScope: "global", registries: ["https://github.com/anthropics/skills"] }, null, 2));
+  if (!fs.existsSync(GLOBAL_MEM())) fs.writeFileSync(GLOBAL_MEM(), "# 全局记忆（跨笔记）\n\n- 在此记录跨所有导图通用的偏好、约定、长期事实。\n- 行内可用 `- ` 列表；AI 会在每次对话前读取。\n");
 }
-function readCfg() { ensure(); try { return JSON.parse(fs.readFileSync(CFG_PATH, "utf8")); } catch (e) { return { memoryScope: "global", registries: [] }; } }
-function writeCfg(c) { ensure(); fs.writeFileSync(CFG_PATH, JSON.stringify(c, null, 2)); }
+function readCfg() { ensure(); try { return JSON.parse(fs.readFileSync(CFG_PATH(), "utf8")); } catch (e) { return { memoryScope: "global", registries: [] }; } }
+function writeCfg(c) { ensure(); fs.writeFileSync(CFG_PATH(), JSON.stringify(c, null, 2)); }
 function safeJoin(base, name) { const fp = path.normalize(path.join(base, name)); if (!fp.startsWith(base)) throw new Error("非法名称"); return fp; }
 function readText(fp) { try { return fs.readFileSync(fp, "utf8"); } catch (e) { return ""; } }
 
@@ -48,19 +49,19 @@ function scanDir(dir) {
 }
 function listSkills() {
   ensure();
-  const proj = scanDir(SKILLS_DIR);
+  const proj = scanDir(SKILLS_DIR());
   const globalDir = path.join(os.homedir(), ".mindweave", "skills");
   let global = [];
   const seen = new Set(proj.map(s => s.name));
   if (fs.existsSync(globalDir)) for (const s of scanDir(globalDir)) if (!seen.has(s.name)) { s.global = true; global.push(s); }
   return proj.concat(global);
 }
-function getSkill(name) { ensure(); return parseSkill(SKILLS_DIR, name) || parseSkill(path.join(os.homedir(), ".mindweave", "skills"), name); }
+function getSkill(name) { ensure(); return parseSkill(SKILLS_DIR(), name) || parseSkill(path.join(os.homedir(), ".mindweave", "skills"), name); }
 function skillEnabled(name) { const c = readCfg(); const d = (c.disabledSkills || []); return d.indexOf(name) < 0; }
 function setSkillEnabled(name, on) { const c = readCfg(); c.disabledSkills = (c.disabledSkills || []).filter(x => x !== name); if (!on) c.disabledSkills.push(name); writeCfg(c); }
-function deleteSkill(name) { const fp = safeJoin(SKILLS_DIR, name); fs.rmSync(fp, { recursive: true, force: true }); }
-function createSkill(name, md) { const dir = safeJoin(SKILLS_DIR, name); fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, "SKILL.md"), md); }
-function linkSkill(name, target) { const fp = safeJoin(SKILLS_DIR, name); try { fs.symlinkSync(target, fp, "dir"); } catch (e) { throw new Error("软链失败：" + e.message); } }
+function deleteSkill(name) { const fp = safeJoin(SKILLS_DIR(), name); fs.rmSync(fp, { recursive: true, force: true }); }
+function createSkill(name, md) { const dir = safeJoin(SKILLS_DIR(), name); fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, "SKILL.md"), md); }
+function linkSkill(name, target) { const fp = safeJoin(SKILLS_DIR(), name); try { fs.symlinkSync(target, fp, "dir"); } catch (e) { throw new Error("软链失败：" + e.message); } }
 
 function skillsPrompt() {
   const all = listSkills().filter(s => skillEnabled(s.name));
@@ -70,13 +71,13 @@ function skillsPrompt() {
   return s;
 }
 
-function memPathFor(scope, noteId) { return scope === "note" && noteId ? path.join(NOTES_MEM, noteId + ".md") : GLOBAL_MEM; }
+function memPathFor(scope, noteId) { return scope === "note" && noteId ? path.join(NOTES_MEM(), noteId + ".md") : GLOBAL_MEM(); }
 function readMem(scope, noteId) { ensure(); return readText(memPathFor(scope, noteId)); }
 function writeMem(scope, noteId, txt) { ensure(); fs.writeFileSync(memPathFor(scope, noteId), txt); }
 function combinedMem(noteId) {
   const c = readCfg(); const scope = c.memoryScope || "global";
-  const g = readText(GLOBAL_MEM);
-  if (scope === "note" && noteId) { const n = readText(path.join(NOTES_MEM, noteId + ".md")); return { global: g, note: n }; }
+  const g = readText(GLOBAL_MEM());
+  if (scope === "note" && noteId) { const n = readText(path.join(NOTES_MEM(), noteId + ".md")); return { global: g, note: n }; }
   return { global: g, note: "" };
 }
 function memoryPrompt(noteId) {

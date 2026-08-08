@@ -170,7 +170,7 @@ var(--bg)}
 .ntb-btn:hover{background:var(--sand);color:var(--ink)}
 .ntb-btn.danger:hover{background:rgba(180,72,58,.12);color:var(--err)}
 #nodeEditorInput{position:absolute;z-index:40;display:none;border:1.5px solid var(--clay);border-radius:8px;background:var(--card);color:var(--ink);outline:none;padding:2px 8px;box-shadow:var(--shadow-lg);font-family:var(--sans);font-weight:500}
-#nodeEditorInput.armed{border-color:transparent;background:transparent;box-shadow:none;color:transparent;caret-color:var(--ink);pointer-events:none}
+#nodeEditorInput.armed{border-color:transparent;background:transparent;box-shadow:none;color:transparent;caret-color:transparent;pointer-events:none}
 #nodeEditorInput.editing{color:var(--ink);pointer-events:auto}
 .node.editing text{opacity:0}
 #hintPill{position:absolute;left:16px;bottom:16px;z-index:25;display:flex;align-items:center;gap:10px;background:color-mix(in srgb,var(--card) 88%,transparent);backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:999px;padding:7px 8px 7px 14px;font-size:11.5px;color:var(--ink-2);box-shadow:var(--shadow);animation:rise .4s .6s cubic-bezier(.3,1.3,.5,1) both}
@@ -206,6 +206,8 @@ var(--bg)}
 .pane-stat{font-weight:500;letter-spacing:0;color:var(--ink-3);font-variant-numeric:tabular-nums}
 #mdEditor{flex:1;width:100%;resize:none;border:none;outline:none;background:transparent;color:var(--ink);font-family:var(--mono);font-size:12.5px;line-height:1.75;padding:12px 14px;tab-size:2;white-space:pre;overflow:auto}
 #mdEditor::placeholder{color:var(--ink-3)}
+.md-fbtn{font-size:10.5px;padding:1px 7px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--ink-3);cursor:pointer;font-family:var(--sans);transition:.15s}
+.md-fbtn:hover{color:var(--ink);border-color:var(--clay)}
 #vSplit{height:7px;flex:none;cursor:row-resize;display:flex;align-items:center;justify-content:center;background:var(--panel);transition:background var(--t);position:relative;z-index:5}
 #vSplit:hover,#vSplit.drag{background:var(--sand-2)}
 #vSplit::after{content:"";width:34px;height:3px;border-radius:3px;background:var(--line-2)}
@@ -282,6 +284,12 @@ select.f-input{cursor:pointer}
 #testMsg.ok{color:var(--ok)}
 #testMsg.err{color:var(--err)}
 .modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:0 22px 20px}
+.set-tabs{display:flex;gap:4px;padding:10px 22px 0;border-bottom:1px solid var(--line)}
+.set-tab{border:none;background:transparent;color:var(--ink-2);font-size:12.5px;font-weight:600;padding:7px 12px;cursor:pointer;font-family:var(--sans);border-radius:8px 8px 0 0;transition:color var(--t)}
+.set-tab:hover{color:var(--ink);background:var(--sand)}
+.set-tab.on{color:var(--clay);box-shadow:inset 0 -2px 0 var(--clay)}
+.set-pane{display:none}
+.set-pane.on{display:block}
 #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(16px);z-index:200;background:var(--ink);color:var(--bg);font-size:12.5px;font-weight:500;padding:9px 16px;border-radius:999px;box-shadow:var(--shadow-lg);opacity:0;pointer-events:none;transition:all .25s cubic-bezier(.3,1.3,.5,1)}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .upd-btn{position:relative}
@@ -412,7 +420,7 @@ select.f-input{cursor:pointer}
       </div>
       <input id="nodeEditorInput" spellcheck="false">
       <div id="hintPill">
-        <span>双击节点改名</span><span><kbd id="hkAdd">Tab</kbd> 子节点</span><span><kbd id="hkSib">Enter</kbd> 同级</span><span><kbd id="hkCol">Shift+Tab</kbd> 折叠</span><span><kbd>⌘K</kbd> 对话</span>
+        <span>单击选中 · 直接输入改名</span><span><kbd id="hkAdd">Tab</kbd> 子节点</span><span><kbd id="hkSib">Enter</kbd> 同级</span><span><kbd id="hkCol">Shift+Tab</kbd> 折叠</span><span><kbd>⌘K</kbd> 对话</span>
         <button class="ibtn" id="hintClose" style="width:20px;height:20px"></button>
       </div>
     </div>
@@ -424,6 +432,8 @@ select.f-input{cursor:pointer}
         <div class="pane-head">
           <svg class="icon sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
           MARKDOWN
+          <button class="md-fbtn" id="mdFoldBtn" title="折叠/展开光标所在主题的子主题 (⌘⇧[ / ⌘⇧])">折叠</button>
+          <button class="md-fbtn" id="mdExpandBtn" title="展开全部已折叠的子主题">展开</button>
           <div class="pane-spacer"></div>
           <span class="pane-stat" id="mdStats"></span>
         </div>
@@ -459,8 +469,15 @@ select.f-input{cursor:pointer}
 
 <div class="modal-layer" id="setModal">
   <div class="modal">
-    <div class="modal-head"><span class="modal-title">模型接入设置</span><button class="ibtn m-close" data-m="setModal"></button></div>
+    <div class="modal-head"><span class="modal-title">设置</span><button class="ibtn m-close" data-m="setModal"></button></div>
+    <div class="set-tabs">
+      <button class="set-tab on" data-tab="model">模型接入</button>
+      <button class="set-tab" data-tab="agent">Agent API</button>
+      <button class="set-tab" data-tab="canvas">画布与快捷键</button>
+      <button class="set-tab" data-tab="data">数据存储</button>
+    </div>
     <div class="modal-body">
+      <div class="set-pane on" id="setPaneModel">
       <div class="mode-cards">
         <div class="mode-card" id="mcMock"><b>内置演示（Mock）</b><span>不调用任何 API，用本地脚本演示流式改图。零配置、零成本。</span></div>
         <div class="mode-card" id="mcApi"><b>自定义 API / 本地模型</b><span>任意 OpenAI 兼容端点：Moonshot、DeepSeek、OpenAI、Ollama、LM Studio…</span></div>
@@ -491,22 +508,6 @@ select.f-input{cursor:pointer}
         <div class="lc-state" id="cliStatus" style="margin-top:6px">未检测</div>
         <div class="f-note" style="margin-top:6px">启动方式：在项目目录运行 <code style="font-family:var(--mono);font-size:10.5px">node server.js</code>，然后打开它打印的地址。桥接会自动读取 <code style="font-family:var(--mono);font-size:10.5px">~/.claude/settings.json</code> 的 ANTHROPIC_BASE_URL，复用本地 Claude CLI 的鉴权。</div>
       </div>
-      <div id="agentApiBlock" style="margin-top:12px;border:1px solid var(--line);border-radius:var(--r-md);padding:11px 12px;background:var(--card)">
-        <div style="display:flex;align-items:center;gap:8px"><b style="font-size:13px">Agent API</b><span class="pane-stat" id="apiStat">检测中…</span><span class="pane-spacer"></span><a id="skillLink" href="/skill.md" target="_blank" rel="noopener" style="font-size:11.5px;color:var(--clay);font-weight:650;text-decoration:none">SKILL.md · Agent 使用说明 ↗</a></div>
-        <div class="f-note" style="margin-top:6px">让外部 Agent（Claude Code / Codex / OpenCode…）经 HTTP 直接读写你的笔记，应用 3 秒内实时同步。生成 Key 后把 <code style="font-family:var(--mono);font-size:10.5px">SKILL.md</code> 交给 Agent 即可。</div>
-        <div id="apiKeyRow" style="margin-top:8px;display:none">
-          <div class="f-row">
-            <input class="f-input" id="apiKeyInput" type="password" readonly style="font-family:var(--mono);font-size:11.5px">
-            <button class="ibtn" id="apiKeyEye" title="显示 / 隐藏"></button>
-            <button class="ibtn" id="apiKeyCopy" title="复制 Key"></button>
-          </div>
-          <div style="margin-top:7px;display:flex;gap:8px">
-            <button class="btn line" id="apiKeyRegen" style="height:26px;font-size:11.5px">重新生成</button>
-            <button class="btn ghost" id="apiKeyRevoke" style="height:26px;font-size:11.5px">停用</button>
-          </div>
-        </div>
-        <button class="btn primary" id="apiKeyGen" style="margin-top:8px;height:28px;font-size:12px;display:none">生成 API Key</button>
-      </div>
       <div id="apiFields">
         <span class="f-label">预设服务</span>
         <select class="f-input" id="presetSelect">
@@ -533,6 +534,26 @@ select.f-input{cursor:pointer}
           <span id="testMsg"></span>
         </div>
       </div>
+      </div>
+      <div class="set-pane" id="setPaneAgent">
+      <div id="agentApiBlock" style="border:1px solid var(--line);border-radius:var(--r-md);padding:11px 12px;background:var(--card)">
+        <div style="display:flex;align-items:center;gap:8px"><b style="font-size:13px">Agent API</b><span class="pane-stat" id="apiStat">检测中…</span><span class="pane-spacer"></span><a id="skillLink" href="/skill.md" target="_blank" rel="noopener" style="font-size:11.5px;color:var(--clay);font-weight:650;text-decoration:none">SKILL.md · Agent 使用说明 ↗</a></div>
+        <div class="f-note" style="margin-top:6px">让外部 Agent（Claude Code / Codex / OpenCode…）经 HTTP 直接读写你的笔记，应用 3 秒内实时同步。生成 Key 后把 <code style="font-family:var(--mono);font-size:10.5px">SKILL.md</code> 交给 Agent 即可。</div>
+        <div id="apiKeyRow" style="margin-top:8px;display:none">
+          <div class="f-row">
+            <input class="f-input" id="apiKeyInput" type="password" readonly style="font-family:var(--mono);font-size:11.5px">
+            <button class="ibtn" id="apiKeyEye" title="显示 / 隐藏"></button>
+            <button class="ibtn" id="apiKeyCopy" title="复制 Key"></button>
+          </div>
+          <div style="margin-top:7px;display:flex;gap:8px">
+            <button class="btn line" id="apiKeyRegen" style="height:26px;font-size:11.5px">重新生成</button>
+            <button class="btn ghost" id="apiKeyRevoke" style="height:26px;font-size:11.5px">停用</button>
+          </div>
+        </div>
+        <button class="btn primary" id="apiKeyGen" style="margin-top:8px;height:28px;font-size:12px;display:none">生成 API Key</button>
+      </div>
+      </div>
+      <div class="set-pane" id="setPaneCanvas">
       <span class="f-label">画布操作</span>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
         <span style="font-size:12.5px;color:var(--ink-2)">移动画布</span>
@@ -547,10 +568,25 @@ select.f-input{cursor:pointer}
       <span class="f-label">快捷键（点「录制」后按下新组合；Esc 取消；可「恢复默认」）</span>
       <div id="keybindList"></div>
       <div style="margin-top:8px"><button class="btn line" id="resetKeybinds" style="height:28px;font-size:12px"></button></div>
+      </div>
+      <div class="set-pane" id="setPaneData">
+        <span class="f-label">本地数据文件夹</span>
+        <div class="f-note" id="dataDirPath" style="word-break:break-all;font-family:var(--mono);font-size:11px">…</div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn line" id="revealFolderBtn">前往本地文件夹</button>
+          <button class="btn ghost" id="dataDirReset" style="display:none">恢复默认位置</button>
+        </div>
+        <span class="f-label" style="margin-top:16px">更改保存位置</span>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn line" id="dataDirPick">选择文件夹…</button>
+          <button class="btn primary" id="dataDirApply" style="display:none">应用新位置</button>
+        </div>
+        <div class="f-note" id="dataDirPicked" style="display:none;margin-top:6px;word-break:break-all;font-family:var(--mono);font-size:11px"></div>
+        <div class="f-note" style="margin-top:6px">新位置若是空文件夹，会把现有笔记、记忆、回收站整体迁移过去；若已有思脉数据则直接使用。应用后页面自动刷新。</div>
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn ghost m-close" data-m="setModal">取消</button>
-      <button class="btn line" id="revealFolderBtn">前往本地文件夹</button>
       <button class="btn primary" id="setSave">保存设置</button>
     </div>
   </div>
@@ -652,13 +688,13 @@ if(!line.trim()||/^\s*```/.test(line))continue;
 let m=line.match(/^(#{1,6})\s+(.+)$/);
 if(m){const d=m[1].length-1;
 if(d===0&&!seen){root.title=m[2].trim();seen=true;lastHead=0;continue}
-seen=true;const depth=d===0?1:Math.min(d,4);lastHead=depth;attach({id:"",title:m[2].trim(),children:[],depth},depth);
+seen=true;const depth=d===0?1:d;lastHead=depth;attach({id:"",title:m[2].trim(),children:[],depth},depth);
 continue}
 m=line.match(/^(\s*)[-*+]\s+(.+)$/);
-if(m){const indent=Math.floor(m[1].replace(/\t/g,"  ").length/2);const d=(seen?lastHead:0)+1+indent;const node={id:"",title:m[2].trim(),children:[],depth:Math.min(d,4)};attach(node,node.depth);continue}
+if(m){const indent=Math.floor(m[1].replace(/\t/g,"  ").length/2);const d=(seen?lastHead:0)+1+indent;const node={id:"",title:m[2].trim(),children:[],depth:d};attach(node,node.depth);continue}
 if(line.trim()){const node={id:"",title:line.trim(),children:[],depth:(seen?lastHead:0)+1};attach(node,node.depth)}
 }
-function attach(node,depth){node.depth=clamp(depth,1,4);while(stack.length>1&&stack[stack.length-1].d>=node.depth)stack.pop();const p=stack[stack.length-1].n;node.id=p.id+"."+p.children.length;p.children.push(node);stack.push({n:node,d:node.depth})}
+function attach(node,depth){node.depth=Math.max(1,depth);while(stack.length>1&&stack[stack.length-1].d>=node.depth)stack.pop();const p=stack[stack.length-1].n;node.id=p.id+"."+p.children.length;p.children.push(node);stack.push({n:node,d:node.depth})}
 assignIds(root);return root;
 }
 function assignIds(n){n.children.forEach((c,i)=>{c.id=n.id+"."+i;c.depth=n.depth+1;assignIds(c)})}
@@ -772,8 +808,8 @@ for(const l of linkEls){const pp=P.get(l.pid),cp=P.get(l.cid);if(!pp||!cp)contin
 const x1=pp.x+pn.w,y1=pp.y+pn.h/2,x2=cp.x,y2=cp.y+cn.h/2,dx=Math.max(24,(x2-x1)*.5);
 l.path.setAttribute("d","M "+x1+" "+y1+" C "+(x1+dx)+" "+y1+", "+(x2-dx)+" "+y2+", "+(x2-3)+" "+y2)}
 }
-function afterRender(){if(selectedId&&gEls.has(selectedId)){gEls.forEach(m=>m.g.classList.remove("sel"));gEls.get(selectedId).g.classList.add("sel")}placeToolbar();updateMdStats()}
-function repositionEditor(){if(!editingId)return;const m=gEls.get(editingId);if(!m||!m.meta)return;const n=m.meta;const tf=m.g.getAttribute("transform")||"";const mm=tf.match(/translate\(([-\d.]+)[ ,]([-\d.]+)\)/);if(!mm)return;const x=parseFloat(mm[1]),y=parseFloat(mm[2]);nodeEditor.style.display="block";const fs=clamp(13.5*view.s,11,22);nodeEditor.style.fontSize=fs+"px";nodeEditor.style.boxSizing="border-box";nodeEditor.style.left=(view.tx+x*view.s)+"px";nodeEditor.style.top=(view.ty+y*view.s)+"px";nodeEditor.style.width=Math.max(40,n.w*view.s)+"px";nodeEditor.style.height=(n.h*view.s)+"px";nodeEditor.style.lineHeight=(n.h*view.s-4)+"px"}
+function afterRender(){if(selectedId&&gEls.has(selectedId)){gEls.forEach(m=>m.g.classList.remove("sel"));gEls.get(selectedId).g.classList.add("sel")}if(editingId&&(nodeEditor.classList.contains("armed")||nodeEditor.classList.contains("editing"))){if(gEls.has(editingId)){if(nodeEditor.classList.contains("armed")){const _en=findNode(editingId);if(_en)nodeEditor.dataset.orig=_en.title}repositionEditor()}else disarmEditor()}placeToolbar();updateMdStats()}
+function repositionEditor(){if(!editingId)return;const m=gEls.get(editingId);if(!m||!m.meta)return;const n=m.meta;let p=posMap.get(editingId);if(!p){const tf=m.g.getAttribute("transform")||"";const mm=tf.match(/translate\(([-\d.eE+]+)[ ,]([-\d.eE+]+)\)/);if(mm)p={x:parseFloat(mm[1]),y:parseFloat(mm[2])}}if(!p)p={x:n.bx||0,y:n.by||0};const x=p.x,y=p.y;nodeEditor.style.display="block";const fs=clamp(13.5*view.s,11,22);nodeEditor.style.fontSize=fs+"px";nodeEditor.style.boxSizing="border-box";nodeEditor.style.left=(view.tx+x*view.s)+"px";nodeEditor.style.top=(view.ty+y*view.s)+"px";nodeEditor.style.width=Math.max(40,n.w*view.s)+"px";nodeEditor.style.height=(n.h*view.s)+"px";nodeEditor.style.lineHeight=(n.h*view.s-4)+"px"}
 function applyTransform(){
 const _m=24,_W=wrapEl.clientWidth,_H=wrapEl.clientHeight,_s=view.s;
 const _cw=bbox.w*_s,_ch=bbox.h*_s;
@@ -789,7 +825,7 @@ placeToolbar();
 }
 function rebuildMap(anim){clearHistory();tree=mdToTree(activeDoc()?activeDoc().markdown:"");renderMap(anim)}
 function commitTree(anim){const md=treeToMd(tree);const d=activeDoc();if(d){d.markdown=md;d.updatedAt=Date.now();syncNoteTitleFromTree()}
-$("#mdEditor").value=md;renderMap(anim);markDirty();renderDocListSoon()}
+mdSetView(md);renderMap(anim);markDirty();renderDocListSoon()}
 const renderDocListSoon=debounce(renderDocList,800);
 function syncNoteTitleFromTree(){if(!tree)return;const d=activeDoc();if(!d)return;const t=(tree.title||"").trim();
 if(t&&t!=="中心主题"&&t!==d.title){d.title=t;if(document.activeElement!==$("#docTitleInput"))syncTitle();renderDocListSoon()}}
@@ -905,9 +941,9 @@ $("#fitBtn").onclick=()=>{applyFit();};
 $("#zoomOutBtn").innerHTML=icon("minus");$("#zoomInBtn").innerHTML=icon("plus");$("#fitBtn").innerHTML=icon("fit");
 
 function disarmEditor(){nodeEditor.classList.remove("armed","editing");nodeEditor.style.display="none";if(editingId&&gEls.has(editingId))gEls.get(editingId).g.classList.remove("editing");editingId=null;try{if(document.activeElement===nodeEditor)nodeEditor.blur()}catch(e){}}
-function selectNode(id){selectedId=id;if(nodeEditor.classList.contains("editing")&&editingId&&editingId!==id)commitEdit();gEls.forEach(m=>m.g.classList.remove("sel"));if(id&&gEls.has(id)){gEls.get(id).g.classList.add("sel");if(editingId===id)gEls.get(id).g.classList.add("editing");else disarmEditor()}else disarmEditor();placeToolbar()}
-function armEditor(id){const m=gEls.get(id);if(!m)return;editingId=id;m.g.classList.remove("editing");nodeEditor.classList.add("armed");nodeEditor.classList.remove("editing");nodeEditor.value="";repositionEditor();if(document.activeElement!==nodeEditor)nodeEditor.focus();try{nodeEditor.selectionStart=nodeEditor.selectionEnd=0}catch(e){}}
-function beginEditing(){if(!nodeEditor.classList.contains("armed"))return;nodeEditor.classList.remove("armed");nodeEditor.classList.add("editing");const _en=editingId?findNode(editingId):null;if(_en)nodeEditor.dataset.orig=_en.title;if(selectedId&&gEls.has(selectedId))gEls.get(selectedId).g.classList.add("editing")}
+function selectNode(id){selectedId=id;if(nodeEditor.classList.contains("editing")&&editingId&&editingId!==id)commitEdit();gEls.forEach(m=>m.g.classList.remove("sel"));if(id&&gEls.has(id)){gEls.get(id).g.classList.add("sel");if(nodeEditor.classList.contains("editing")&&editingId===id)gEls.get(id).g.classList.add("editing");else armEditor(id)}else disarmEditor();placeToolbar()}
+function armEditor(id){const m=gEls.get(id);if(!m)return;editingId=id;m.g.classList.remove("editing");nodeEditor.classList.add("armed");nodeEditor.classList.remove("editing");nodeEditor.value="";nodeEditor.dataset.orig=m.meta.title;repositionEditor();if(document.activeElement!==nodeEditor)nodeEditor.focus();try{nodeEditor.selectionStart=nodeEditor.selectionEnd=0}catch(e){}requestAnimationFrame(()=>{if(editingId===id&&nodeEditor.classList.contains("armed")&&document.activeElement!==nodeEditor)nodeEditor.focus()})}
+function beginEditing(){if(!nodeEditor.classList.contains("armed"))return;nodeEditor.classList.remove("armed");nodeEditor.classList.add("editing");const _en=editingId?findNode(editingId):null;if(_en)nodeEditor.dataset.orig=_en.title;nodeEditor.style.textAlign="left";if(selectedId&&gEls.has(selectedId))gEls.get(selectedId).g.classList.add("editing")}
 function placeToolbar(){
 const tb=$("#nodeToolbar");
 if(!selectedId||!gEls.has(selectedId)||pan||drag){tb.style.display="none";return}
@@ -962,7 +998,7 @@ function startNodeEdit(id){const m=gEls.get(id);if(!m)return;editingId=id;const 
 nodeEditor.classList.remove("armed");nodeEditor.classList.add("editing");gEls.forEach(x=>x.g.classList.remove("editing"));if(selectedId&&gEls.has(selectedId))gEls.get(selectedId).g.classList.add("editing");
 const _orig=n.title;nodeEditor.dataset.orig=_orig;const _ph=(_orig==="新主题"||_orig==="");if(_ph){nodeEditor.value="";nodeEditor.style.textAlign="center";repositionEditor();nodeEditor.focus();try{nodeEditor.setSelectionRange(0,0)}catch(e){}}else{nodeEditor.value=_orig;nodeEditor.style.textAlign="left";repositionEditor();nodeEditor.focus();try{nodeEditor.setSelectionRange(_orig.length,_orig.length)}catch(e){}}
 }
-nodeEditor.addEventListener("input",()=>{if(!nodeEditor.classList.contains("editing"))return;const ph=(nodeEditor.dataset.orig==="新主题"||nodeEditor.dataset.orig==="");nodeEditor.style.textAlign=(ph&&!nodeEditor.value)?"center":"left"});
+nodeEditor.addEventListener("input",()=>{if(nodeEditor.classList.contains("armed")){if(nodeEditor.value)beginEditing();return}if(!nodeEditor.classList.contains("editing"))return;const ph=(nodeEditor.dataset.orig==="新主题"||nodeEditor.dataset.orig==="");nodeEditor.style.textAlign=(ph&&!nodeEditor.value)?"center":"left"});
 nodeEditor.addEventListener("keydown",e=>{const armed=nodeEditor.classList.contains("armed");if(e.key==="Tab"||e.key==="Shift")e.preventDefault();if(armed&&(e.metaKey||e.ctrlKey))return;e.stopPropagation();if(armed){const _act=actionFor(e)||(selSet.size>1&&(e.key==="Delete"||e.key==="Backspace")?"deleteNode":null);if(_act){e.preventDefault();dispatchAction(_act);return}if(!e.metaKey&&!e.ctrlKey&&!e.altKey&&e.key.length===1){beginEditing();return}}if(e.key==="Tab"&&!e.shiftKey){e.preventDefault();const _id=editingId;commitEdit();if(_id&&findNode(_id))addChild(_id)}else if(e.key==="Enter"){e.preventDefault();commitEdit()}else if(e.key==="Escape"){e.preventDefault();cancelEdit()}});
 nodeEditor.addEventListener("compositionstart",()=>{beginEditing()});
 nodeEditor.addEventListener("blur",()=>{if(nodeEditor.classList.contains("armed")){if(selectedId&&gEls.has(selectedId)){nodeEditor.value="";try{nodeEditor.selectionStart=nodeEditor.selectionEnd=0}catch(e){}}else{nodeEditor.style.display="none";nodeEditor.classList.remove("armed","editing");editingId=null}return}commitEdit()});
@@ -974,7 +1010,7 @@ let undoStack=[],redoStack=[],createHist=[];
 function pushUndo(){try{undoStack.push({md:activeDoc()?activeDoc().markdown:"",sel:selectedId});if(undoStack.length>200)undoStack.shift();redoStack.length=0}catch(e){}}
 function clearHistory(){undoStack.length=0;redoStack.length=0;createHist.length=0}
 function recordCreate(id){createHist.push(id);if(createHist.length>500)createHist.shift()}
-function doUndo(isRedo){const d=activeDoc();if(!d)return;const from=isRedo?redoStack:undoStack,to=isRedo?undoStack:redoStack;if(isRedo?!from.length:from.length<=1)return;const snap=from.pop();to.push({md:d.markdown,sel:selectedId});d.markdown=snap.md;$("#mdEditor").value=snap.md;tree=mdToTree(d.markdown);selectedId=snap.sel&&findNode(snap.sel)?snap.sel:null;renderMap(false);syncNoteTitleFromTree();if(selectedId)gEls.has(selectedId)&&gEls.get(selectedId).g.classList.add("sel");markDirty();updateMdStats()}
+function doUndo(isRedo){const d=activeDoc();if(!d)return;const from=isRedo?redoStack:undoStack,to=isRedo?undoStack:redoStack;if(isRedo?!from.length:from.length<=1)return;const snap=from.pop();to.push({md:d.markdown,sel:selectedId});d.markdown=snap.md;mdSetView(snap.md);tree=mdToTree(d.markdown);selectedId=snap.sel&&findNode(snap.sel)?snap.sel:null;renderMap(false);syncNoteTitleFromTree();if(selectedId)gEls.has(selectedId)&&gEls.get(selectedId).g.classList.add("sel");markDirty();updateMdStats()}
 const DEFAULT_KEYBINDS={addChild:"Tab",addSibling:"Enter",collapse:"Shift+Tab",deleteNode:"Backspace",navDown:"ArrowDown",navUp:"ArrowUp",navLeft:"ArrowLeft",navRight:"ArrowRight"};
 const KB_LABELS={addChild:"新建子主题",addSibling:"新建同级主题",collapse:"折叠 / 展开",deleteNode:"删除节点",navDown:"选中下一个",navUp:"选中上一个",navLeft:"选中父节点",navRight:"选中首个子节点"};
 let keybinds=Object.assign({},DEFAULT_KEYBINDS);
@@ -984,7 +1020,7 @@ function matchesKey(e,c){if(!c)return false;const wantShift=c.includes("Shift+")
 function actionFor(e){for(const a in keybinds){if(matchesKey(e,keybinds[a]))return a}return null}
 function dispatchAction(action){if(!selectedId||!gEls.has(selectedId))return;const nd=findNode(selectedId);switch(action){case"addChild":addChild(selectedId);break;case"addSibling":addSibling(selectedId);break;case"collapse":if(nd&&nd.children.length)toggleCollapse(selectedId);break;case"deleteNode":if(selSet.size>1)deleteNodes([...selSet]);else deleteNode(selectedId,{cascade:true});break;case"navDown":{let o=[];(function w(n){o.push(n.id);(n.visChildren||[]).forEach(w)})(tree);const i=o.indexOf(selectedId);if(i<o.length-1)selectNode(o[i+1]);break}case"navUp":{let o=[];(function w(n){o.push(n.id);(n.visChildren||[]).forEach(w)})(tree);const i=o.indexOf(selectedId);if(i>0)selectNode(o[i-1]);break}case"navLeft":if(nd&&nd._parent)selectNode(nd._parent.id);break;case"navRight":if(nd&&nd.visChildren&&nd.visChildren.length)selectNode(nd.visChildren[0].id);break}}
 document.addEventListener("keydown",e=>{
-if(e.target&&e.target.matches&&e.target.matches("input,textarea,select"))return;
+if(e.target&&e.target.matches&&e.target.matches("input,textarea,select")&&e.target!==nodeEditor)return;
 if(selSet.size>1&&(e.key==="Delete"||e.key==="Backspace")&&!e.metaKey&&!e.ctrlKey&&!e.altKey){e.preventDefault();deleteNodes([...selSet]);return}
 if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="k"){e.preventDefault();if(state.ui.rightOpen)$("#chatInput").focus();else{toggleRight(true);setTimeout(()=>$("#chatInput").focus(),300)}return}
 if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="s"){e.preventDefault();persist();setSaved();toast("已保存到本地");return}
@@ -1002,10 +1038,28 @@ if(!selectedId||!gEls.has(selectedId))return;
 const _act=actionFor(e)||(selSet.size>1&&(e.key==="Delete"||e.key==="Backspace")?"deleteNode":null);if(_act){e.preventDefault();dispatchAction(_act);return}});
 
 const mdEditor=$("#mdEditor");
-const onEditorInput=debounce(()=>{const d=activeDoc();if(!d)return;d.markdown=mdEditor.value;d.updatedAt=Date.now();tree=mdToTree(d.markdown);syncNoteTitleFromTree();renderMap(true);markDirty();renderDocListSoon()},280);
+const onEditorInput=debounce(()=>{const d=activeDoc();if(!d)return;const ex=mdViewToFullEx(mdEditor.value);let full=ex.lines.join("\n");let viewDirty=false;const orphans=mdFoldStash.filter(e=>!ex.used.has(e));for(const e of orphans){const fl=full.split("\n");let pi=fl.findIndex((l,i)=>l===e.parent&&(i>0?fl[i-1]:null)===e.prev);if(pi<0)pi=fl.indexOf(e.parent);if(pi>=0){fl.splice(pi+1,0,...e.hidden);full=fl.join("\n");viewDirty=true}else{full+=(full.endsWith("\n")?"":"\n")+e.hidden.join("\n")+"\n";e._dead=true;toast("已展开被删除的折叠内容")}}mdFoldStash=mdFoldStash.filter(e=>!e._dead);if(viewDirty)mdEditor.value=mdBuildView(full);d.markdown=full;d.updatedAt=Date.now();tree=mdToTree(full);syncNoteTitleFromTree();renderMap(true);markDirty();renderDocListSoon()},280);
 mdEditor.addEventListener("input",()=>{updateMdStats();onEditorInput()});
 mdEditor.addEventListener("keydown",e=>{if(e.key==="Tab"){e.preventDefault();const s=mdEditor.selectionStart,en=mdEditor.selectionEnd;mdEditor.value=mdEditor.value.slice(0,s)+"  "+mdEditor.value.slice(en);mdEditor.selectionStart=mdEditor.selectionEnd=s+2;mdEditor.dispatchEvent(new Event("input"))}});
-function updateMdStats(){const v=mdEditor.value;$("#mdStats").textContent=v.replace(/\s/g,"").length+" 字 · "+(v.split("\n").length)+" 行 · "+(tree?countNodes(tree):0)+" 节点"}
+function updateMdStats(){const v=mdGetFull();$("#mdStats").textContent=v.replace(/\s/g,"").length+" 字 · "+(v.split("\n").length)+" 行 · "+(tree?countNodes(tree):0)+" 节点"}
+let mdFoldStash=[];const MD_FOLD_RE=/^(\s*)⋯\s*(\d+)\s*项已折叠$/;
+function mdLineMeta(md){const out=[];let lastHead=0,seen=false;for(const raw of String(md).split("\n")){const line=raw.replace(/\r$/,"").replace(/\t/g,"  ");if(!line.trim()){out.push({topic:false});continue}if(/^\s*```/.test(line)){out.push({topic:false});continue}let m=line.match(/^(#{1,6})\s+(.+)$/);if(m){const d=m[1].length-1;if(d===0&&!seen){seen=true;lastHead=0;out.push({topic:true,depth:0});continue}seen=true;const depth=d===0?1:Math.min(d,4);lastHead=depth;out.push({topic:true,depth});continue}m=line.match(/^(\s*)[-*+]\s+(.+)$/);if(m){const indent=Math.floor(m[1].length/2);out.push({topic:true,depth:clamp((seen?lastHead:0)+1+indent,1,4)});continue}out.push({topic:true,depth:clamp((seen?lastHead:0)+1,1,4)})}return out}
+function mdChildBlock(lines,meta,i){const d=meta[i].depth;const block=[];let j=i+1;while(j<lines.length){if(!meta[j].topic){let k=j;while(k<lines.length&&!meta[k].topic)k++;if(k<lines.length&&meta[k].depth>d){for(let q=j;q<k;q++)block.push(lines[q]);j=k;continue}break}if(meta[j].depth>d){block.push(lines[j]);j++;continue}break}return{start:i+1,end:j,lines:block}}
+function mdFindEntryBlock(lines,meta,e){const cands=[];for(let i=0;i<lines.length;i++){if(lines[i]===e.parent&&meta[i]&&meta[i].topic)cands.push(i)}if(!cands.length)return null;let pick=cands[0];if(cands.length>1){const q=cands.find(i=>(i>0?lines[i-1]:null)===e.prev);if(q!=null)pick=q}const b=mdChildBlock(lines,meta,pick);return b.lines.length?b:null}
+function mdBuildView(full){if(!mdFoldStash.length)return full;const lines=full.split("\n");const meta=mdLineMeta(full);const marks=[];for(const e of mdFoldStash){const b=mdFindEntryBlock(lines,meta,e);if(b){e.hidden=b.lines.slice();marks.push({pi:b.start-1,start:b.start,end:b.end,e})}else e._dead=true}mdFoldStash=mdFoldStash.filter(e=>!e._dead);marks.sort((a,b)=>b.start-a.start);for(const mk of marks){const topicN=mk.e.hidden.filter(l=>l.trim()).length;const indent=(lines[mk.pi].match(/^\s*/)||[""])[0];lines.splice(mk.start,mk.end-mk.start,indent+"⋯ "+topicN+" 项已折叠");const delta=1-(mk.end-mk.start);for(const o of marks){if(o!==mk&&!o._done&&o.start<mk.start&&o.end>=mk.end)o.end+=delta}mk._done=true}return lines.join("\n")}
+function mdViewToFullEx(view){let cur=view.split("\n");let curMap=cur.map((_,i)=>i);const used=new Set();for(let pass=0;pass<20;pass++){let changed=false;const nxt=[];const nxtMap=[];for(let i=0;i<cur.length;i++){if(MD_FOLD_RE.test(cur[i])){const parent=i>0?cur[i-1]:null;const cands=mdFoldStash.filter(s0=>!used.has(s0)&&s0.parent===parent);let e=null;if(cands.length===1)e=cands[0];else if(cands.length>1)e=cands.find(s0=>s0.prev===(i>=2?cur[i-2]:null))||cands[0];if(e){used.add(e);for(const h of e.hidden){nxt.push(h);nxtMap.push(curMap[i])}changed=true;continue}}nxt.push(cur[i]);nxtMap.push(curMap[i])}cur=nxt;curMap=nxtMap;if(!changed)break}return{lines:cur,viewOf:curMap,used}}
+function mdGetFull(){return mdViewToFullEx(mdEditor.value).lines.join("\n")}
+function mdSetView(full){const lines=full.split("\n");const meta=mdLineMeta(full);for(const e of mdFoldStash){const b=mdFindEntryBlock(lines,meta,e);if(b)e.hidden=b.lines.slice();else e._dead=true}mdFoldStash=mdFoldStash.filter(e=>!e._dead);mdEditor.value=mdBuildView(full)}
+function mdCursorLine(){const pos=mdEditor.selectionStart;const lines=mdEditor.value.split("\n");let acc=0;for(let i=0;i<lines.length;i++){if(pos<acc+lines[i].length+1)return i;acc+=lines[i].length+1}return lines.length-1}
+function mdLineOffset(view,li){const lines=view.split("\n");let acc=0;for(let i=0;i<li&&i<lines.length;i++)acc+=lines[i].length+1;return acc}
+function mdFoldAtCursor(){const view=mdEditor.value;const li=mdCursorLine();const vlines=view.split("\n");const cur=vlines[li]||"";if(MD_FOLD_RE.test(cur)){mdUnfoldAtLine(li);return}const ex=mdViewToFullEx(view);const fk=ex.viewOf.indexOf(li);if(fk<0)return;const meta=mdLineMeta(ex.lines.join("\n"));if(!meta[fk]||!meta[fk].topic){toast("光标所在行不是主题");return}const b=mdChildBlock(ex.lines,meta,fk);if(!b.lines.length){toast("该主题没有子主题");return}const parent=ex.lines[fk];const prev=fk>0?ex.lines[fk-1]:null;if(mdFoldStash.some(s0=>s0.parent===parent&&s0.prev===prev)){toast("已处于折叠状态");return}mdFoldStash.push({prev,parent,hidden:b.lines.slice()});mdEditor.value=mdBuildView(ex.lines.join("\n"));mdEditor.selectionStart=mdEditor.selectionEnd=mdLineOffset(mdEditor.value,li);toast("已折叠 "+b.lines.filter(l=>l.trim()).length+" 项子主题")}
+function mdUnfoldAtLine(li){const view=mdEditor.value;const vlines=view.split("\n");const parent=li>0?vlines[li-1]:null;const cands=mdFoldStash.filter(s0=>s0.parent===parent);let e=null;if(cands.length===1)e=cands[0];else if(cands.length>1)e=cands.find(s0=>s0.prev===(li>=2?vlines[li-2]:null))||cands[0];if(!e)return;const ex=mdViewToFullEx(view);mdFoldStash=mdFoldStash.filter(s0=>s0!==e);mdEditor.value=mdBuildView(ex.lines.join("\n"));mdEditor.selectionStart=mdEditor.selectionEnd=mdLineOffset(mdEditor.value,li)}
+function mdUnfoldAll(){if(!mdFoldStash.length){toast("没有已折叠的内容");return}const full=mdViewToFullEx(mdEditor.value).lines.join("\n");mdFoldStash=[];mdEditor.value=full;toast("已全部展开")}
+$("#mdFoldBtn").onclick=()=>{mdEditor.focus();mdFoldAtCursor()};
+$("#mdExpandBtn").onclick=()=>{mdEditor.focus();mdUnfoldAll()};
+mdEditor.addEventListener("keydown",e=>{if((e.metaKey||e.ctrlKey)&&e.shiftKey&&e.code==="BracketLeft"){e.preventDefault();mdFoldAtCursor()}else if((e.metaKey||e.ctrlKey)&&e.shiftKey&&e.code==="BracketRight"){e.preventDefault();const li=mdCursorLine();if(MD_FOLD_RE.test(mdEditor.value.split("\n")[li]||""))mdUnfoldAtLine(li);else toast("光标不在折叠标记行")}});
+mdEditor.addEventListener("click",()=>{const li=mdCursorLine();if(MD_FOLD_RE.test(mdEditor.value.split("\n")[li]||""))mdUnfoldAtLine(li)});
+mdEditor.addEventListener("keyup",e=>{if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Home","End"].includes(e.key)){const li=mdCursorLine();if(MD_FOLD_RE.test(mdEditor.value.split("\n")[li]||""))mdUnfoldAtLine(li)}});
 
 $("#hintClose").innerHTML=icon("x","icon sm");
 $("#hintClose").onclick=()=>{$("#hintPill").style.display="none";state.ui.hintSeen=true;persist()};
@@ -1059,7 +1113,7 @@ $("#docTitleInput").addEventListener("input",()=>{const d=activeDoc();if(!d)retu
 $("#docTitleInput").addEventListener("blur",()=>{const d=activeDoc();if(d&&!d.title.trim()){d.title="未命名";syncTitle()}});
 
 function openDoc(id){if(id===state.activeId)return;state.activeId=id;persist();loadDocToView();renderDocList()}
-function loadDocToView(){const d=activeDoc();if(!d)return;syncTitle();mdEditor.value=d.markdown;tree=mdToTree(d.markdown);selectedId=null;userZoomed=false;clearHistory();renderMap(false);renderChat();renderSugg();updateMdStats();setSaved();pushUndo()}
+function loadDocToView(){const d=activeDoc();if(!d)return;syncTitle();mdFoldStash=[];mdSetView(d.markdown);tree=mdToTree(d.markdown);selectedId=null;userZoomed=false;clearHistory();renderMap(false);renderChat();renderSugg();updateMdStats();setSaved();pushUndo()}
 function removeDoc(id){const doc=state.docs.find(d=>d.id===id);if(doc&&serverOK)fetch("/api/trash/put",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(doc)}).catch(()=>{});state.docs=state.docs.filter(d=>d.id!==id);if(state.activeId===id){state.activeId=state.docs.length?state.docs[0].id:null;if(!state.activeId)createDoc("blank",true)}persist();renderDocList();loadDocToView();toast("已移入回收站");refreshTrashBadge()}
 function createDoc(tplId,silent){const t=TEMPLATES.find(x=>x.id===tplId)||TEMPLATES[0];const d={id:uid(),title:t.name==="空白"?"未命名导图":t.name+" · "+new Date().toLocaleDateString("zh-CN",{month:"numeric",day:"numeric"}),markdown:t.md,group:t.group,template:tplId,createdAt:Date.now(),updatedAt:Date.now(),chat:[{role:"assistant",text:welcomeFor(tplId)}]};
 state.docs.unshift(d);state.activeId=d.id;persist();renderDocList();loadDocToView();if(!silent)toast("已创建「"+d.title+"」")}
@@ -1075,7 +1129,7 @@ $("#importBtn").innerHTML=icon("up","icon sm")+"导入";
 $("#importBtn").onclick=()=>$("#fileInput").click();
 $("#fileInput").addEventListener("change",e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{const d={id:uid(),title:f.name.replace(/\.(md|markdown|txt)$/i,""),markdown:String(r.result),group:"未分组",template:"blank",createdAt:Date.now(),updatedAt:Date.now(),chat:[{role:"assistant",text:"已导入「"+f.name+"」，导图已生成。想调整结构，直接说。"}]};state.docs.unshift(d);state.activeId=d.id;persist();renderDocList();loadDocToView();toast("导入成功")};r.readAsText(f);e.target.value=""});
 $("#settingsBtn").innerHTML=icon("gear","icon sm")+"设置";
-$("#settingsBtn").onclick=()=>{syncSettingsUI();syncAgentApi();openModal("setModal");probeLocal();checkServer(true)};
+$("#settingsBtn").onclick=()=>{syncSettingsUI();syncAgentApi();switchSetTab("model");syncDataDirUI();openModal("setModal");probeLocal();checkServer(true)};
 $("#themeToggleBtn").onclick=()=>{state.ui.dark=!state.ui.dark;applyDark();persist();renderMap(false)};
 function applyDark(){document.documentElement.classList.toggle("dark",state.ui.dark);$("#themeToggleBtn").innerHTML=state.ui.dark?icon("sun","icon"):icon("moon","icon")}
 $("#sideToggleBtn").innerHTML=icon("panelL");
@@ -1168,7 +1222,7 @@ function applyPatch(lines){const items=parsePatchItems(lines);if(!items.length)r
 for(const it of items){let found=null;(function w(n){if(found)return;if(n.title===it.title){found=n;return}(n.children||[]).forEach(w)})(tree);
 if(found){if(it.children.length)found.children=buildPatchNodes(it.children,found.depth+1);names.push(it.title)}
 else{tree.children.push(buildPatchNodes([it],1)[0]);names.push(it.title+"（新）")}count++}
-assignIds(tree);commitTree(true);const md=treeToMd(tree);const d=activeDoc();if(d)d.markdown=md;$("#mdEditor").value=md;return{count,names}}
+assignIds(tree);commitTree(true);const md=treeToMd(tree);const d=activeDoc();if(d)d.markdown=md;mdSetView(md);return{count,names}}
 let generating=false;
 $("#chatForm").addEventListener("submit",e=>{e.preventDefault();sendChat()});
 $("#chatInput").addEventListener("input",e=>{const ta=e.target;ta.style.height="auto";ta.style.height=Math.min(ta.scrollHeight,140)+"px"});
@@ -1195,7 +1249,7 @@ const lastP=body.lastElementChild;
 const frag=mdToHtml(chatText);body.innerHTML=frag;caret()},
 onDoc:()=>setStatus("正在绘制导图…"),
 onPatch:()=>{if(body.querySelector(".typing"))body.innerHTML="";setStatus("正在修改导图…")},
-onLine:md=>{tree=mdToTree(md);$("#mdEditor").value=md;renderMap(true);const n=sink.docLines.filter(l=>l.trim()).length;if(n)setStatus("已绘制 "+n+" 个主题")},
+onLine:md=>{tree=mdToTree(md);mdSetView(md);renderMap(true);const n=sink.docLines.filter(l=>l.trim()).length;if(n)setStatus("已绘制 "+n+" 个主题")},
 onPatchLine:line=>{const first=sink.patchLines.find(l=>l.trim());if(first){const m=first.match(/^\s*[-·]\s+(.*)$/);setStatus(m?"正在修改「"+m[1].trim()+"」…":"正在修改导图…")}else setStatus("正在修改导图…")}
 });
 let done;const finished=new Promise(res=>done=res);
@@ -1221,7 +1275,7 @@ done();
 await finished;
 body.querySelector(".caret")?.remove();status.remove();
 const docN=sink.hasDoc?countNodes(tree):0;
-if(sink.hasDoc){const md=sink.docText();tree=mdToTree(md);d.markdown=md;$("#mdEditor").value=md;renderMap(false);syncNoteTitleFromTree();
+if(sink.hasDoc){const md=sink.docText();tree=mdToTree(md);d.markdown=md;mdSetView(md);renderMap(false);syncNoteTitleFromTree();
 ai.insertAdjacentHTML("beforeend",'<span class="docchip">'+icon("zap","icon sm")+"已更新导图 · "+docN+" 个节点</span>")}
 else if(sink.hasPatch){const rep=applyPatch(sink.patchLines);if(rep.count)ai.insertAdjacentHTML("beforeend",'<span class="docchip">'+icon("zap","icon sm")+"已修改 · "+rep.names.slice(0,3).join("、")+(rep.names.length>3?" 等 "+rep.names.length+" 处":"")+"</span>")}
 if(!body.innerHTML.trim()&&!sink.hasDoc&&!sink.hasPatch)body.innerHTML="<p>……</p>";
@@ -1328,6 +1382,9 @@ $("#setKeyEye").innerHTML=icon("eye");
 $("#setKeyEye").onclick=()=>{const k=$("#setKey");k.type=k.type==="password"?"text":"password";$("#setKeyEye").innerHTML=k.type==="password"?icon("eye"):icon("eyeOff")};
 $("#reprobeBtn").innerHTML=icon("refresh","icon sm")+"重新探测";
 $("#reprobeBtn").onclick=()=>probeLocal();
+function switchSetTab(t){document.querySelectorAll("#setModal .set-tab").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));document.querySelectorAll("#setModal .set-pane").forEach(p=>p.classList.toggle("on",p.id==="setPane"+t.charAt(0).toUpperCase()+t.slice(1)))}
+function syncDataDirUI(){const el=$("#dataDirPath");if(!el)return;el.textContent=dataDir||"（未连接 server.js 本地桥接，当前数据仅保存在浏览器 localStorage）";const custom=!!(dataDir&&defaultDir&&dataDir!==defaultDir);$("#dataDirReset").style.display=custom?"":"none"}
+function changeDataDir(p){fetch("/api/data/dir",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:p})}).then(async r=>{const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||"设置失败");toast(p?(j.migrated?"保存位置已更新，笔记已迁移，正在刷新…":"保存位置已更新，正在刷新…"):"已恢复默认位置，正在刷新…");setTimeout(()=>location.reload(),900)}).catch(e=>toast(e.message==="Failed to fetch"?"需启动 server.js 本地桥接":e.message))}
 function syncSettingsUI(){setModeUI(state.settings.mode);$("#setBase").value=state.settings.baseURL;$("#setKey").value=state.settings.apiKey;$("#setModel").value=state.settings.model;$("#testMsg").textContent="";fillCliStatus();{const sel=$("#backendSelect");if(sel&&sel.options.length){const has=[...sel.options].some(o=>o.value===state.settings.backend);if(has)sel.value=state.settings.backend}}renderKeybinds();
 $("#presetSelect").value=["https://api.moonshot.cn/v1","https://api.deepseek.com/v1","https://api.openai.com/v1","http://localhost:11434/v1","http://localhost:1234/v1"].includes(state.settings.baseURL)?state.settings.baseURL:"";const _pm=$("#panModSel");if(_pm)_pm.value=state.settings.panModifier||"Alt"}
 async function probeLocal(){
@@ -1393,7 +1450,7 @@ $("#expSvgBtn").innerHTML=icon("img");
 $("#expPngBtn").innerHTML=icon("dl");
 function download(blob,name){const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)}
 function docName(){return (activeDoc()?activeDoc().title:"mindmap").replace(/[\\/:*?"<>|]/g,"_")}
-$("#expMdBtn").onclick=()=>{download(new Blob([mdEditor.value],{type:"text/markdown"}),docName()+".md");toast("已导出 Markdown")};
+$("#expMdBtn").onclick=()=>{download(new Blob([mdGetFull()],{type:"text/markdown"}),docName()+".md");toast("已导出 Markdown")};
 function svgString(){
 const svgClone=$("#mapSvg").cloneNode(true);
 svgClone.setAttribute("xmlns",NS);
@@ -1427,15 +1484,15 @@ const d={id:uid(),title:"雾港孤灯 · 侦探小说大纲",markdown:t.md,group
 state.docs=[d];state.activeId=d.id;
 state.groups=DEFAULT_GROUPS.map(n=>({name:n}));
 }
-let serverOK=false, booted=false;
+let serverOK=false, booted=false, dataDir="", defaultDir="";
 function save(){try{localStorage.setItem(LS.docs,JSON.stringify(state.docs));localStorage.setItem(LS.groups,JSON.stringify(state.groups));localStorage.setItem(LS.settings,JSON.stringify(state.settings));localStorage.setItem(LS.ui,JSON.stringify(state.ui));localStorage.setItem(LS.themes,JSON.stringify(state.customThemes));localStorage.setItem(LS.active,state.activeId)}catch(e){}if(serverOK)fetch("/api/data/sync",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({groups:state.groups,docs:state.docs,activeId:state.activeId,settings:{memoryScope:state.settings.memoryScope,backend:state.settings.backend,keybinds:keybinds}})}).catch(()=>{});try{localStorage.setItem(LS.settings,JSON.stringify(Object.assign({},state.settings,{keybinds:keybinds})))}catch(e){}}
 function persist(){save()}
 function setBridgeUI(ok){serverOK=ok;const c=$("#bridgeChip");if(!c)return;c.classList.toggle("off",!ok);$("#bridgeText").textContent=ok?"本地桥接已连接":"桥接未启动"}
 function showOverlay(){const ov=$("#bridgeOverlay");if(ov)ov.classList.add("open")}
 function hideOverlay(){const ov=$("#bridgeOverlay");if(ov)ov.classList.remove("open")}
 function finishUI(){loadBackends();renderSkills();refreshTrashBadge();startHeartbeat();checkServer(false).then(h=>{setBridgeUI(!!h);if(h){checkUpdate();if(h.ready&&!state.ui.modeExplicit){state.settings.mode="cli";save()}}syncModelChip();renderDocList();loadDocToView();setTimeout(()=>renderMap(false),60)})}
-function wireStaticUI(){applyDark();$("#sidebar").classList.toggle("closed",!state.ui.sideOpen);$("#rightCol").classList.toggle("closed",!state.ui.rightOpen);$("#editorPane").style.flex="0 0 "+state.ui.rightSplit+"%";if(state.ui.hintSeen)$("#hintPill").style.display="none";syncThemeBtn();wireTopUpdate();wireAgentApi();$("#skillCreateBtn").innerHTML=icon("plus","icon sm");$("#skillInstallBtn").innerHTML=icon("up","icon sm");$("#skillCreateBtn").onclick=openCreateSkillModal;$("#skillInstallBtn").onclick=openInstallSkillModal;$("#memoryBtn").innerHTML=icon("book","icon sm")+"记忆";$("#memoryBtn").onclick=openMemoryModal;$("#trashBtn").innerHTML=icon("trash","icon sm")+"回收站";$("#trashBtn").onclick=openTrashModal;$("#backendSelect").addEventListener("change",e=>{state.settings.backend=e.target.value;save();syncModelChip()});$("#panModSel").addEventListener("change",e=>{state.settings.panModifier=e.target.value;save()});$("#setSave").addEventListener("click",()=>{const rf=$("#revealFolderBtn");if(rf&&!rf.dataset.bound){rf.dataset.bound="1";rf.onclick=()=>fetch("/api/data").then(r=>r.json()).then(d=>fetch("/api/data/reveal?p="+encodeURIComponent(d.dataDir))).catch(()=>toast("无法打开文件夹"))}});$("#resetKeybinds").innerHTML=icon("refresh","icon sm")+"恢复默认";$("#resetKeybinds").onclick=()=>{keybinds=JSON.parse(JSON.stringify(DEFAULT_KEYBINDS));state.settings.keybinds=JSON.parse(JSON.stringify(DEFAULT_KEYBINDS));try{localStorage.setItem(LS.settings,JSON.stringify(Object.assign({},state.settings,{keybinds:keybinds})))}catch(e){}if(serverOK)fetch("/api/data/sync",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({groups:state.groups,docs:state.docs,activeId:state.activeId,settings:{memoryScope:state.settings.memoryScope,backend:state.settings.backend,keybinds:keybinds}})}).catch(()=>{});renderKeybinds();toast("快捷键已恢复默认（折叠 = Shift+Tab）")};const bc=$("#bridgeChip");if(bc)bc.onclick=()=>showOverlay();const br=$("#boRetry");if(br)br.onclick=()=>boot(true);const bm=$("#boMock");if(bm)bm.onclick=()=>{hideOverlay();state.settings.mode="mock";state.ui.modeExplicit=true;if(!state.docs.length){seed()}if(!state.activeId&&state.docs.length)state.activeId=state.docs[0].id;save();finishUI()}}
-async function boot(retry){if(!booted){booted=true;state.customThemes=load(LS.themes,[]);state.ui=Object.assign(state.ui,load(LS.ui,{}));state.settings=Object.assign(state.settings,load(LS.settings,{}));if(state.settings.keybinds)keybinds=Object.assign({},DEFAULT_KEYBINDS,state.settings.keybinds);if(keybinds.collapse==="Space"||keybinds.collapse===" "){keybinds.collapse="Shift+Tab"}wireStaticUI()}let data=null;try{const r=await fetch("/api/data",{cache:"no-store"});if(r.ok)data=await r.json()}catch(e){}if(data){serverOK=true;hideOverlay();state.groups=(data.groups&&data.groups.length)?data.groups:state.groups;state.docs=(data.docs&&data.docs.length)?data.docs:state.docs;if(data.settings){if(data.settings.memoryScope)state.settings.memoryScope=data.settings.memoryScope;if(data.settings.backend)state.settings.backend=data.settings.backend}if(data.settings.keybinds)keybinds=Object.assign({},DEFAULT_KEYBINDS,data.settings.keybinds);if(keybinds.collapse==="Space"||keybinds.collapse===" "){keybinds.collapse="Shift+Tab"}if(!state.docs.length){seed()}state.activeId=data.activeId&&state.docs.find(d=>d.id===data.activeId)?data.activeId:(state.docs[0]&&state.docs[0].id)||null;save();setBridgeUI(true);finishUI()}else{serverOK=false;setBridgeUI(false);state.docs=load(LS.docs,null)||[];state.groups=load(LS.groups,null)||DEFAULT_GROUPS.map(n=>({name:n}));state.activeId=load(LS.active,null);if(!state.docs.length){seed();save()}if(!state.activeId||!state.docs.find(d=>d.id===state.activeId))state.activeId=state.docs[0]?state.docs[0].id:null;if(!retry){finishUI();showOverlay()}else{showOverlay()}if(!window.__bridgeProbe){window.__bridgeProbe=setInterval(async()=>{try{const r=await fetch("/api/health",{cache:"no-store"});if(!r.ok)throw new Error();clearInterval(window.__bridgeProbe);window.__bridgeProbe=null;boot(true)}catch(e){}},2000)}}}
+function wireStaticUI(){applyDark();$("#sidebar").classList.toggle("closed",!state.ui.sideOpen);$("#rightCol").classList.toggle("closed",!state.ui.rightOpen);$("#editorPane").style.flex="0 0 "+state.ui.rightSplit+"%";if(state.ui.hintSeen)$("#hintPill").style.display="none";syncThemeBtn();wireTopUpdate();wireAgentApi();$("#skillCreateBtn").innerHTML=icon("plus","icon sm");$("#skillInstallBtn").innerHTML=icon("up","icon sm");$("#skillCreateBtn").onclick=openCreateSkillModal;$("#skillInstallBtn").onclick=openInstallSkillModal;$("#memoryBtn").innerHTML=icon("book","icon sm")+"记忆";$("#memoryBtn").onclick=openMemoryModal;$("#trashBtn").innerHTML=icon("trash","icon sm")+"回收站";$("#trashBtn").onclick=openTrashModal;$("#backendSelect").addEventListener("change",e=>{state.settings.backend=e.target.value;save();syncModelChip()});$("#panModSel").addEventListener("change",e=>{state.settings.panModifier=e.target.value;save()});$("#revealFolderBtn").onclick=()=>{fetch("/api/data/reveal").then(r=>{if(!r.ok)throw new Error();return r.json()}).catch(()=>toast("无法打开文件夹：需启动 server.js 本地桥接"))};let pickedDir="";$("#dataDirPick").onclick=async()=>{const b=$("#dataDirPick");b.disabled=true;b.textContent="等待选择…";try{const r=await fetch("/api/data/pick-dir");const j=await r.json();if(j.path){pickedDir=j.path;const pd=$("#dataDirPicked");pd.style.display="";pd.textContent="已选择："+pickedDir;$("#dataDirApply").style.display=""}else toast("已取消选择")}catch(e){toast("需启动 server.js 本地桥接")}b.disabled=false;b.textContent="选择文件夹…"};$("#dataDirApply").onclick=()=>{if(pickedDir)changeDataDir(pickedDir)};$("#dataDirReset").onclick=()=>changeDataDir("");document.querySelectorAll("#setModal .set-tab").forEach(b=>b.onclick=()=>switchSetTab(b.dataset.tab));$("#resetKeybinds").innerHTML=icon("refresh","icon sm")+"恢复默认";$("#resetKeybinds").onclick=()=>{keybinds=JSON.parse(JSON.stringify(DEFAULT_KEYBINDS));state.settings.keybinds=JSON.parse(JSON.stringify(DEFAULT_KEYBINDS));try{localStorage.setItem(LS.settings,JSON.stringify(Object.assign({},state.settings,{keybinds:keybinds})))}catch(e){}if(serverOK)fetch("/api/data/sync",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({groups:state.groups,docs:state.docs,activeId:state.activeId,settings:{memoryScope:state.settings.memoryScope,backend:state.settings.backend,keybinds:keybinds}})}).catch(()=>{});renderKeybinds();toast("快捷键已恢复默认（折叠 = Shift+Tab）")};const bc=$("#bridgeChip");if(bc)bc.onclick=()=>showOverlay();const br=$("#boRetry");if(br)br.onclick=()=>boot(true);const bm=$("#boMock");if(bm)bm.onclick=()=>{hideOverlay();state.settings.mode="mock";state.ui.modeExplicit=true;if(!state.docs.length){seed()}if(!state.activeId&&state.docs.length)state.activeId=state.docs[0].id;save();finishUI()}}
+async function boot(retry){if(!booted){booted=true;state.customThemes=load(LS.themes,[]);state.ui=Object.assign(state.ui,load(LS.ui,{}));state.settings=Object.assign(state.settings,load(LS.settings,{}));if(state.settings.keybinds)keybinds=Object.assign({},DEFAULT_KEYBINDS,state.settings.keybinds);if(keybinds.collapse==="Space"||keybinds.collapse===" "){keybinds.collapse="Shift+Tab"}wireStaticUI()}let data=null;try{const r=await fetch("/api/data",{cache:"no-store"});if(r.ok)data=await r.json()}catch(e){}if(data){serverOK=true;hideOverlay();dataDir=data.dataDir||"";defaultDir=data.defaultDir||"";state.groups=(data.groups&&data.groups.length)?data.groups:state.groups;state.docs=(data.docs&&data.docs.length)?data.docs:state.docs;if(data.settings){if(data.settings.memoryScope)state.settings.memoryScope=data.settings.memoryScope;if(data.settings.backend)state.settings.backend=data.settings.backend}if(data.settings.keybinds)keybinds=Object.assign({},DEFAULT_KEYBINDS,data.settings.keybinds);if(keybinds.collapse==="Space"||keybinds.collapse===" "){keybinds.collapse="Shift+Tab"}if(!state.docs.length){seed()}state.activeId=data.activeId&&state.docs.find(d=>d.id===data.activeId)?data.activeId:(state.docs[0]&&state.docs[0].id)||null;save();setBridgeUI(true);finishUI()}else{serverOK=false;setBridgeUI(false);state.docs=load(LS.docs,null)||[];state.groups=load(LS.groups,null)||DEFAULT_GROUPS.map(n=>({name:n}));state.activeId=load(LS.active,null);if(!state.docs.length){seed();save()}if(!state.activeId||!state.docs.find(d=>d.id===state.activeId))state.activeId=state.docs[0]?state.docs[0].id:null;if(!retry){finishUI();showOverlay()}else{showOverlay()}if(!window.__bridgeProbe){window.__bridgeProbe=setInterval(async()=>{try{const r=await fetch("/api/health",{cache:"no-store"});if(!r.ok)throw new Error();clearInterval(window.__bridgeProbe);window.__bridgeProbe=null;boot(true)}catch(e){}},2000)}}}
 boot(false);
 
 let _lastMtime=0,_pollBusy=false;
@@ -1452,7 +1509,7 @@ try{localStorage.setItem(LS.docs,JSON.stringify(state.docs));localStorage.setIte
 if(!merged)return;
 const nd=activeDoc();const ndStamp=nd?nd.updatedAt+"|"+nd.markdown:"";
 if(state.activeId!==prevActiveId){loadDocToView()}
-else if(nd&&ndStamp!==prevStamp){mdEditor.value=nd.markdown;tree=mdToTree(nd.markdown);if(selectedId&&!findNode(selectedId))selectedId=null;renderMap(false);renderChat();renderSugg();updateMdStats();const t=new Date();$("#saveText").textContent="已同步 · "+String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0");$("#saveStatus").classList.remove("dirty")}}catch(e){}finally{_pollBusy=false}},3000)}
+else if(nd&&ndStamp!==prevStamp){mdSetView(nd.markdown);tree=mdToTree(nd.markdown);if(selectedId&&!findNode(selectedId))selectedId=null;renderMap(false);renderChat();renderSugg();updateMdStats();const t=new Date();$("#saveText").textContent="已同步 · "+String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0");$("#saveStatus").classList.remove("dirty")}}catch(e){}finally{_pollBusy=false}},3000)}
 function mergeServerData(data){let merged=false;
 for(const sd of data.docs){const ld=state.docs.find(d=>d.id===sd.id);
 if(!ld){state.docs.push(sd);merged=true}
